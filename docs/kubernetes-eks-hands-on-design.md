@@ -52,7 +52,7 @@
 
 - 複雑な業務アプリ・美しいフロントエンドを開発すること。
 - 認証基盤、決済、マルチテナント、マイクロサービス分割を最初から構築すること。
-- Service Mesh、Karpenter、GitOps、Helm、OpenTelemetry などを序盤から全部投入すること。
+- Service Mesh、Karpenter、GitOps、Helm、OpenTelemetry などを序盤から全部投入すること。エコシステムのツールは、素の `kubectl` とマニフェストで仕組みを理解した後に、必要になったフェーズで段階的に導入する（[ADR-0005](adr/0005-kubernetes-ecosystem-tools.md)）。
 - 本番システムと同等の SLA、ゼロダウンタイム、セキュリティ保証を主張すること。
 - クラウド環境を常時起動すること。
 
@@ -121,6 +121,9 @@ Task
 | Container | Docker / Docker Compose | Kubernetes と比較する出発点 |
 | Local Kubernetes | kind + kubectl | クラスターをローカルに再作成できる |
 | マニフェスト管理 | Kustomize（`kubectl -k`） | 早期に Helm の追加学習を要求せず環境差分を管理できる |
+| パッケージ利用 | Helm（Phase 7 から） | 公式 chart で配布される周辺コンポーネントを導入する。自作 chart は Phase 8 の比較後に判断 |
+| GitOps | Argo CD（Phase 8、まず kind 上） | Git を正とした同期と、CI からの直接 apply の違いを費用をかけずに比較できる |
+| 補助 CLI | k9s（Phase 5、任意） | `kubectl` での調査手順を習得した後の、観察の効率化に限定して使う |
 | AWS IaC | Terraform | VPC・EKS・周辺サービスの構造を明示的に学べる |
 | CI / CD | GitHub Actions（後半） | テスト・イメージ作成・デプロイの責務を分離できる |
 
@@ -423,7 +426,7 @@ kubernetes-eks-learning/
 - ローカルのダミー秘密情報だけを使い、実パスワードはリポジトリに含まれない。
 - 秘密情報を Secret に置いただけでは暗号化・アクセス制御が完全になるわけではないと説明できる。
 
-**設計の問い:** PostgreSQL をなぜ StatefulSet にするのか？ PVC は何を守り、何を守らないのか？
+**設計の問い:** PostgreSQL をなぜ StatefulSet にするのか？ PVC は何を守り、何を守らないのか？ Kustomize の overlay は何を変え、何を生成しないのか（テンプレートエンジンとの違い）？
 
 **Done:** 永続化の実験結果と、StatefulSet 対 RDS の初期比較 ADR を作る。
 
@@ -447,7 +450,7 @@ kubernetes-eks-learning/
 
 ### Phase 5 — セキュリティ、障害調査、運用
 
-**学ぶこと:** ServiceAccount、RBAC、NetworkPolicy、Pod Security Standards、非 root 実行、イメージ管理、診断フロー。
+**学ぶこと:** ServiceAccount、RBAC、NetworkPolicy、Pod Security Standards、非 root 実行、イメージ管理、診断フロー。任意で補助 CLI の k9s。
 
 **実装:**
 
@@ -455,10 +458,11 @@ kubernetes-eks-learning/
 - 必要な ServiceAccount / Role / RoleBinding を説明・実装。
 - NetworkPolicy をサポートする CNI を導入したうえで通信許可・拒否をテスト（kind 標準ネットワークのまま動作すると決めつけない）。
 - 意図的な誤設定を `kubectl describe`、logs、events などで調査するトラブルシュート集。
+- 任意: Runbook を `kubectl` で完成させた後に、同じ障害を k9s で観察し、各画面がどの `kubectl` 操作・API 呼び出しに当たるかを対応づける。k9s は専用 kubeconfig の kind クラスターだけで使い、編集・削除の操作は Runbook の手順に含めない。
 
 **故障実験:** 存在しない image tag、誤った Service selector、DB の DNS 名ミス、権限不足、Resource limit による再起動。
 
-**設計の問い:** K8s Secret のセキュリティ境界は？ 誰が Kubernetes API を操作できるべきか？
+**設計の問い:** K8s Secret のセキュリティ境界は？ 誰が Kubernetes API を操作できるべきか？ k9s のような TUI を使っても、操作できる範囲は何で決まるのか（RBAC との関係）？
 
 **Done:** 意図的に作った障害を再現・発見・復旧する Runbook を完成。
 
@@ -482,17 +486,18 @@ kubernetes-eks-learning/
 
 ### Phase 7 — EKS と AWS マネージドサービス連携
 
-**学ぶこと:** ALB / Ingress、AWS Load Balancer Controller、RDS、Pod Identity、IAM least privilege、ネットワーク設計。
+**学ぶこと:** ALB / Ingress、AWS Load Balancer Controller、RDS、Pod Identity、IAM least privilege、ネットワーク設計、Helm（chart の利用者として）。
 
 **実装:**
 
 - RDS PostgreSQL に切り替え、コンテナ内 DB と責任分界を比較。
 - AWS Load Balancer Controller で ALB を管理し、外部公開の範囲を制限して疎通確認。
+- Controller は公式手順に従い Helm chart で導入する。導入前に chart のバージョンと values を固定・記録し、`helm template` で生成されるマニフェスト（ServiceAccount、RBAC、Deployment、Webhook 等）を読んでから適用する。`helm list` / `helm history` で release の状態と rollback の単位を確認する。
 - ローカルのタスクデータ移行・バックアップ・リストアの設計を記録。
 - 発展課題: CSV エクスポートを S3 に保存し、Pod Identity による限定的なアクセス権限を検証。
 - 発展課題: Redis + Worker を追加し、Job、Deployment、非同期処理の適用先を比較する。
 
-**設計の問い:** なぜ PostgreSQL を RDS に置くのか？ RDS の障害が API の Readiness にどう影響するか？
+**設計の問い:** なぜ PostgreSQL を RDS に置くのか？ RDS の障害が API の Readiness にどう影響するか？ 第三者の Helm chart を導入するとき、何を確認すれば中身を把握したと言えるか？
 
 **Done:** AWS API 権限、L7 ルーティング、データ永続化の設計判断とアクセス試験が残る。
 
@@ -504,11 +509,13 @@ kubernetes-eks-learning/
 
 - CI で lint、unit/API test、Docker image build、Kustomize の構文確認。
 - CD は最初は手動承認制。GitOps（Argo CD 等）は方式比較後に追加。
+- Argo CD は、まず kind 上で WorkBoard の Kustomize overlay を同期対象にして試す（AWS 費用なし）。手動の `kubectl` 変更による drift の検出、同期、Git の revert による戻しを観察する。EKS への導入は、Phase 6 以降の利用承認の範囲内で別途判断する。
+- 自アプリのマニフェストを Helm chart 化するかは、既存の Kustomize 構成と同じ基準（差分の見通し、レビューのしやすさ、配布の必要性）で比較し、ADR に記録してから決める。
 - アプリメトリクスを計測し、レイテンシ、HTTP エラー率、Pod 再起動、リソース使用量を観察。
 - SLI/SLO を小規模な学習用指標として定義する（例: 正常リクエスト率、p95 応答時間）。測定前に達成済みと断言しない。
 - Cost Explorer 等で AWS コストを確認し、不要時に環境を削除する仕組みを検討。
 
-**設計の問い:** GitOps と CI からの直接 `kubectl apply` の違いは？ 管理対象が増えたらどちらが有利か？
+**設計の問い:** GitOps と CI からの直接 `kubectl apply` の違いは？ 管理対象が増えたらどちらが有利か？ Helm と Kustomize は、それぞれどんな変更・配布に向くか？ 両方を同じアプリに使うと何が複雑になるか？
 
 **Done:** 変更から検証、デプロイ、観察、復旧までの手順を説明できる。
 
@@ -546,6 +553,9 @@ kubernetes-eks-learning/
 | ADR-0005 | EKS で RDS を使う | DB の運用責任を分離。費用と AWS 依存が増える |
 | ADR-0006 | 標準 EKS / Managed Node Groups を最初に使用 | 学習対象が明示される。Auto Mode より初期構成が複雑 |
 | ADR-0007 | 学習段階では AWS を自動プロビジョニングしない | 意図しない課金・公開・データ削除を防止 |
+| [docs/adr/0005](adr/0005-kubernetes-ecosystem-tools.md) | エコシステムのツールを段階導入（Kustomize→k9s→Helm→Argo CD） | 仕組みを理解してから道具を使う。導入の時期が後になり、ツールの比較はフェーズの後半に寄る |
+
+この表の ID は設計時の「種」であり、`docs/adr/` の実ファイル番号とは一致しない。実際の ADR はファイル名で参照する。
 
 ADR テンプレートには `Status / Context / Decision / Alternatives / Consequences / Evidence` を含める。
 
@@ -713,6 +723,9 @@ AWS の作成・破棄が必要なら実行前に対象、見積り、影響を�
 14. [Amazon EKS: Cluster API endpoint access](https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html) — API endpoint の公開・非公開制御。
 15. [Amazon EKS Pricing](https://aws.amazon.com/eks/pricing/) — EKS 利用料金（都度確認）。
 16. [AWS Pricing Calculator](https://calculator.aws/) — クラウド費用の事前見積り。
+17. [Helm Docs](https://helm.sh/docs/) — chart・release・`helm template` の概念（Phase 7 で版を確認）。
+18. [Argo CD Documentation](https://argo-cd.readthedocs.io/en/stable/) — Application、同期、drift の扱い（Phase 8 で版を確認）。
+19. [k9s](https://k9scli.io/) — 補助 CLI の機能と導入方法（Phase 5 で版を確認）。
 
 ---
 

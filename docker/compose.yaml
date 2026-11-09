@@ -1,0 +1,83 @@
+name: workboard
+
+x-api: &api
+  image: workboard-api:local
+  build:
+    context: ../app/api
+    target: runtime
+  env_file: ../.env
+
+services:
+  db:
+    image: postgres:17.11-bookworm
+    env_file: ../.env
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  migrate:
+    <<: *api
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=4)"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  web:
+    image: workboard-web:local
+    build: ../app/web
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  db-test:
+    image: postgres:17.11-bookworm
+    profiles: [test]
+    environment:
+      POSTGRES_USER: workboard_test
+      POSTGRES_PASSWORD: test-only-dummy
+      POSTGRES_DB: workboard_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "workboard_test", "-d", "workboard_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  tests:
+    image: workboard-api-test:local
+    build:
+      context: ../app/api
+      target: test
+    profiles: [test]
+    environment:
+      POSTGRES_HOST: db-test
+      POSTGRES_USER: workboard_test
+      POSTGRES_PASSWORD: test-only-dummy
+      POSTGRES_DB: workboard_test
+    command: ["sh", "-c", "alembic upgrade head && pytest -q -p no:cacheprovider"]
+    depends_on:
+      db-test:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

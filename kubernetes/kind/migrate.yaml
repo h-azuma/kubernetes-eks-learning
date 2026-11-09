@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: workboard-migrate
+  namespace: workboard
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 180
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: workboard-api:kind
+          imagePullPolicy: Never
+          command: [alembic, upgrade, head]
+          env:
+            - name: POSTGRES_HOST
+              value: workboard-postgres
+            - name: POSTGRES_USER
+              value: workboard
+            - name: POSTGRES_PASSWORD
+              value: kind-only-dummy
+            - name: POSTGRES_DB
+              value: workboard

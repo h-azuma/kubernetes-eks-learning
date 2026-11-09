@@ -1,0 +1,3464 @@
+{
+  "title": "WorkBoardで学ぶ Kubernetes / EKS",
+  "phases": [
+    {
+      "id": 0,
+      "slug": "foundation",
+      "title": "学習の土台を整える",
+      "subtitle": "環境確認と設計判断の記録",
+      "level": "foundation",
+      "implemented": true,
+      "estimatedMinutes": 25,
+      "summary": "何が使えるかを確かめ、事実と未検証を分けて記録します。",
+      "goals": [
+        "教材の目的、学習順序、今回の範囲を説明できる。",
+        "ツールの未導入と実行失敗を区別し、次のフェーズに必要な準備を整理できる。",
+        "ADR と Git の除外設定の役割を説明できる。"
+      ],
+      "concepts": [
+        {
+          "term": "preflight",
+          "description": "後の作業に必要なツールを参照のみで確認する準備点検です。",
+          "analogy": "出発前に道具をそろえる点検表"
+        },
+        {
+          "term": "ADR",
+          "description": "採用した案・代替案・理由・影響を残す短い設計記録です。",
+          "analogy": "後から判断をたどれる議事録"
+        },
+        {
+          "term": "一次設計書",
+          "description": "方針の原本を一か所で管理し、入口の文書から参照します。",
+          "analogy": "地図の正本と案内板"
+        }
+      ],
+      "sections": [
+        {
+          "id": "start",
+          "title": "二つの画面を使い分ける",
+          "body": "このポータルは学習・回答用の localhost:8765、WorkBoardはタスク操作用の localhost:8080 です。ポータルを開いてもWorkBoardやkindを起動・停止しません。\n\n各章で解説と図を読み、実際の観察は学習メモへ、設計判断は設計課題へ書きます。採点への送信では、何を実行し何を省略したかも伝えてください。"
+        },
+        {
+          "id": "check",
+          "title": "導入と稼働を分けて確認する",
+          "body": "バージョンが返ればCLIの実行は確認できます。Dockerエンジンの起動、DB接続、WSL連携や互換性まで確認できたとは限りません。",
+          "steps": [
+            {
+              "title": "PowerShellで確認",
+              "description": "リポジトリ直下で実行する参照のみの処理です。",
+              "command": "powershell -NoProfile -File .\\scripts\\preflight.ps1",
+              "expected": "Gitが確認できれば終了コード0。他ツールの未導入も区別して表示。"
+            }
+          ]
+        },
+        {
+          "id": "record",
+          "title": "履歴と秘密情報を分ける",
+          "body": ".gitignoreは新たな追跡を避けるための設定です。追跡済みの秘密情報や過去の履歴は消しません。\n\n学習メモには観察・コマンド・期待との差を書きます。設計課題には自分の理由と代替案を書き、結果だけの『できた』から一歩進めます。",
+          "callout": "補助解説はポータル独自の編集です。設計課題と学習メモの項目名は既存ラボを正本にしています。"
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "Git と PowerShell 5.1 以降、または Bash を利用する。その他のツールは未導入でも本ラボを完了できる。AWS 利用やコンテナ起動はなく、クラウド費用は発生しない。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 検証コマンド・期待結果",
+          "body": "Windows PowerShell（リポジトリ直下）:",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File .\\scripts\\preflight.ps1\n$LASTEXITCODE",
+              "expected": "Linux / macOS / WSL の Bash（リポジトリ直下）:"
+            },
+            {
+              "title": "手順 2 / Bash",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "bash -n scripts/preflight.sh\nbash scripts/preflight.sh\necho $?",
+              "expected": "Git、Docker、Docker Compose、kubectl、kind、Python、Node.js、AWS CLI、Terraform の結果が表示される。Git のバージョン取得に成功すれば終了コード 0。他ツールは未導入でもよい。Bash は python3、PowerShell は python を確認する。各シェルの PATH が異なると結果も変わる。\n\nコマンド未検出なら PATH と導入先を確認する。「確認失敗」なら対象のバージョンコマンドを単独で実行し、終了コードと出力を調べる。実行ポリシーの拒否はシェルの設定として確認する。\n\nGit 初期化済みの作業コピーでは、次で除外設定も観察できる:"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "git check-ignore --no-index .env terraform/environments/lab/terraform.tfvars terraform/environments/lab/terraform.tfstate credentials.json private.key\ngit check-ignore --no-index .env.example terraform/environments/lab/terraform.tfvars.example",
+              "expected": "最初のコマンドは全対象のパスを表示して終了コード 0。次は何も表示せず終了コード 1（例示ファイルは除外されない）。ファイルを作る必要はない。未初期化なら git init を行うか、Git の除外確認は未実施として記録する。"
+            }
+          ]
+        }
+      ],
+      "diagram": {
+        "type": "foundation",
+        "title": "問いから次の判断へ",
+        "caption": "学習の情報整理を示す図です。Kubernetes の実行環境ではありません。",
+        "nodes": [
+          {
+            "id": "design",
+            "label": "一次設計書",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "目的と範囲",
+            "column": 0
+          },
+          {
+            "id": "tools",
+            "label": "環境確認",
+            "resource": "terminal",
+            "kind": "terminal",
+            "sublabel": "CLI の導入と稼働を区別",
+            "column": 1
+          },
+          {
+            "id": "observe",
+            "label": "観察メモ",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "実測した結果と未検証",
+            "column": 2
+          },
+          {
+            "id": "adr",
+            "label": "設計課題 / ADR",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "理由・代替案・影響",
+            "column": 3
+          }
+        ],
+        "edges": [
+          {
+            "from": "design",
+            "to": "tools",
+            "label": "必要条件",
+            "relation": "configuration"
+          },
+          {
+            "from": "tools",
+            "to": "observe",
+            "label": "実測",
+            "relation": "configuration"
+          },
+          {
+            "from": "observe",
+            "to": "adr",
+            "label": "判断の根拠",
+            "relation": "configuration"
+          }
+        ],
+        "groups": [],
+        "views": [
+          {
+            "id": "overview",
+            "title": "全体像",
+            "description": "学習の情報整理を示す図です。Kubernetes の実行環境ではありません。",
+            "nodeIds": [
+              "design",
+              "tools",
+              "observe",
+              "adr"
+            ],
+            "relations": [
+              "configuration"
+            ]
+          }
+        ]
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "なぜ最初から EKS にアプリを配置しないのか？",
+          "rubric": [
+            "Kubernetes自体の学習とAWS固有の学習を段階的に分ける",
+            "クラウド費用・構成要素の増加を説明する"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "バージョン表示の成功で、DB 接続や Docker エンジンの起動まで保証できるか？",
+          "rubric": [
+            "CLI導入とエンジン/接続の稼働を区別する",
+            "確認できた事実と未検証を分ける"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "設計書を二つ複製すると、更新時にどんな問題が起きるか？",
+          "rubric": [
+            "更新漏れと正本不明の問題を説明する",
+            "一次情報を一か所で管理する理由を述べる"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "`.gitignore` に追加すれば、過去にコミットした秘密値も消えるか？",
+          "rubric": [
+            "ignoreは今後の追跡対象を制御するものと説明する",
+            "既存履歴や追跡済み秘密値は消えないと説明する"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "実行日・OS・シェル"
+        },
+        {
+          "id": "m2",
+          "label": "preflight の終了コード"
+        },
+        {
+          "id": "m3",
+          "label": "利用可能なツールとバージョン"
+        },
+        {
+          "id": "m4",
+          "label": "未導入・確認失敗"
+        },
+        {
+          "id": "m5",
+          "label": "Git 除外の確認結果"
+        },
+        {
+          "id": "m6",
+          "label": "WSL2 / Docker Desktop の経路"
+        },
+        {
+          "id": "m7",
+          "label": "設計課題への自分の回答"
+        },
+        {
+          "id": "m8",
+          "label": "疑問・未解決事項"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 00 原本",
+          "path": "labs/00-repository-foundation/README.md"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "slug": "compose",
+      "title": "3層アプリを動かす",
+      "subtitle": "Docker Compose とデータの寿命",
+      "level": "foundation",
+      "implemented": true,
+      "estimatedMinutes": 45,
+      "summary": "Web・API・DBの通信と、起動・準備完了・永続化の違いをつかみます。",
+      "goals": [
+        "Web・API・DB を分ける理由と、コンテナ間の DNS・ポートを説明できる。",
+        "起動順と readiness の違いを観察できる。",
+        "API・ブラウザーの再起動後にデータが残る理由を説明できる。",
+        "DB 障害時に Liveness と Readiness の違いを確認できる。"
+      ],
+      "concepts": [
+        {
+          "term": "コンテナとlocalhost",
+          "description": "コンテナごとにプロセスとネットワークの境界があります。API内のlocalhostはAPI自身です。",
+          "analogy": "別々の部屋で『この部屋』と呼ぶ感覚"
+        },
+        {
+          "term": "Readiness",
+          "description": "リクエストを受け付けられるかを確認します。プロセス生存とは別の条件です。",
+          "analogy": "開店していることと注文に応えられることの違い"
+        },
+        {
+          "term": "named volume",
+          "description": "DBコンテナを取り替えても残せる保存先です。volume自体を削除すれば保存データは失われます。",
+          "analogy": "部屋を引っ越しても持っていける収納箱"
+        }
+      ],
+      "sections": [
+        {
+          "id": "flow",
+          "title": "入口はWebだけ",
+          "body": "ブラウザーは8080番のNginxへ接続します。静的画面を受け取り、/api/の呼び出しはNginxがAPIへ転送します。APIはDBサービス名でPostgreSQLへ接続します。\n\nAPI/DBのポートをホストに公開しなくても、同じComposeネットワーク内では通信できます。コンテナを分ける主な理由は個別の更新・再起動・管理です。分割だけで冗長化が完成するわけではありません。"
+        },
+        {
+          "id": "startup",
+          "title": "起動順と準備完了は別",
+          "body": "DB→migration→API→Webの順に準備します。service_healthyはDBの準備条件、service_completed_successfullyはmigrationの正常終了を待つ条件です。\n\nこれは起動時の条件です。稼働中のDB障害では接続の回復やエラー処理が別途必要になります。migrationはテーブルを用意する一回の処理で、長時間リクエストを受けるAPIとは役割が異なります。",
+          "callout": "現在kindを使用して8080を転送中なら、そのまま学習できます。Composeを重ねて起動せず、初回構築はこの章の実習を開いて進めてください。",
+          "steps": [
+            {
+              "title": "Composeの状態を読む",
+              "description": "既存コンテナを変更せず一覧を確認します。停止済みなら何も動いていないことが観察結果です。",
+              "command": "docker compose -f docker/compose.yaml ps -a",
+              "expected": "稼働中ならAPI/DBがhealthy、WebがUp、migrationがExited 0。"
+            },
+            {
+              "title": "準備の経過を読む",
+              "description": "migrationとAPIのログを参照します。",
+              "command": "docker compose -f docker/compose.yaml logs --tail=30 migrate api",
+              "expected": "migrationの正常終了とAPIの起動が分かる。"
+            }
+          ]
+        },
+        {
+          "id": "health",
+          "title": "healthと保存先を観察する",
+          "body": "LivenessはAPIの生存、ReadinessはDBへの接続を確認します。DB停止時にliveまで失敗させると、APIを再起動してもDB障害は直らず、再起動が連鎖し得ます。\n\nAPIやブラウザーを再起動してもタスクが残るのは、DBがnamed volumeに保存するためです。現在8080がkindを向いていれば、同じURLでも保存先はkindのDBです。異なる環境のデータを同じものと考えないでください。",
+          "steps": [
+            {
+              "title": "現在の8080のhealthを見る",
+              "description": "返答の意味に加え、今の8080がComposeかkindかをメモします。",
+              "command": "Invoke-RestMethod http://localhost:8080/health/ready",
+              "expected": "DBに接続できれば正常応答。未起動なら接続失敗も観察結果。"
+            }
+          ]
+        },
+        {
+          "id": "practice-setup-1",
+          "kind": "practice",
+          "title": "実習: Phase 1: Compose 上で WorkBoard を起動する",
+          "body": "Docker Desktop の Linux コンテナエンジンを起動し、リポジトリ直下で操作します。Docker エンジンは docker info で確認できます。kind・Terraform は今回不要です。\n\n初回だけ .env.example を .env にコピーします。すでに .env がある場合は上書きせず、そのファイルを使ってください。\n\nWindows PowerShell:",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "if (-not (Test-Path .env)) { Copy-Item .env.example .env }",
+              "expected": "Linux / macOS / WSL の Bash:"
+            },
+            {
+              "title": "手順 2 / Bash",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "if [ ! -f .env ]; then cp .env.example .env; fi",
+              "expected": ".env をエディターで開き、POSTGRES_PASSWORD の例をローカル専用の値に変更します。このファイルは Git の対象外です。DB 初期化後に値を変更しても既存 DB のパスワードは自動で変わりません。\n\n共通の起動コマンド:"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "docker compose -f docker/compose.yaml up --build -d\ndocker compose -f docker/compose.yaml ps -a",
+              "expected": "migrate は正常終了（Exited 0）、api と db は healthy、web は Up が期待結果です。初回はイメージの取得・ビルドに時間がかかります。WorkBoard（http://localhost:8080） を開くとタスクを作成・編集・削除できます。API ドキュメント（http://localhost:8080/docs） も利用できます。\n\n次は Lab 01（labs/01-compose-basics/README.md） を上から進めてください。観察結果と問いへの回答は、同ファイル末尾の 「学習メモ」 に直接記入します。構成図（docs/architecture/01-compose.md） と 起動・永続化の ADR（docs/adr/0002-compose-startup-and-persistence.md） に採用理由を記載しています。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "Lab 00 完了、Git、Docker と Compose、Linux コンテナエンジンが必要です。初回は公式イメージ・依存のダウンロードとディスク容量が必要です。AWS の利用・課金はありません。ホストでの UI ビルドには Node.js 20.19+ または 22.12+ が必要ですが、Compose 内でもビルドできます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 1. 設定と起動を確認する",
+          "body": "",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "docker compose -f docker/compose.yaml config --quiet\ndocker compose -f docker/compose.yaml up --build -d\ndocker compose -f docker/compose.yaml ps -a\ndocker compose -f docker/compose.yaml logs --tail=30 migrate api",
+              "expected": "設定確認が成功し、DB→migration→API→Web の順に準備されます。migrate の Exited 0 は正常終了です。API・DB が healthy、Web が Up になるまで待ちます。\n\n失敗時は .env の有無、Docker Desktop の起動、8080 番の重複、logs を確認します。初期化後に .env の認証値を変えると DB 内の値と不一致になります。volume 削除で解決しようとせず、まず元の設定を確認してください。引数なしの config は展開後の認証値も表示するため、ログ共有時は --quiet を使います。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-3",
+          "kind": "practice",
+          "title": "実習: 2. 画面で CRUD と再読込を試す",
+          "body": "http://localhost:8080（http://localhost:8080） を開きます。\n\n1. タイトル「Compose の学習」、説明を入力して「作成」。一覧に未着手のタスクが出る。\n2. 「編集」からタイトル・説明・ステータスを変更し「更新」。変更が反映される。\n3. 絞り込みを変え、該当ステータスだけが表示されることを確認。\n4. ブラウザーを再読込し、同じタスクが残ることを確認。\n5. 削除の動作は、後の永続化実験を終えてから確認する。\n\n不正な入力、通信失敗時は画面のメッセージを確認します。API の具体的な仕様は OpenAPI（http://localhost:8080/docs） から確認できます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-4",
+          "kind": "practice",
+          "title": "実習: 3. API と health を確認する",
+          "body": "PowerShell:",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "Invoke-RestMethod http://localhost:8080/health/live\nInvoke-RestMethod http://localhost:8080/health/ready\nInvoke-RestMethod http://localhost:8080/api/v1/tasks",
+              "expected": "Bash:"
+            },
+            {
+              "title": "手順 2 / Bash",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl -i http://localhost:8080/health/live\ncurl -i http://localhost:8080/health/ready\ncurl -i http://localhost:8080/api/v1/tasks",
+              "expected": "正常時は両 health が 200、一覧には画面で作成したタスクが出ます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-5",
+          "kind": "practice",
+          "title": "実習: 4. 再起動・公開ポート・データ保持を観察する",
+          "body": "",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "docker compose -f docker/compose.yaml restart api\ndocker compose -f docker/compose.yaml ps\ndocker compose -f docker/compose.yaml port web 80\ndocker compose -f docker/compose.yaml port api 8000\ndocker compose -f docker/compose.yaml port db 5432",
+              "expected": "API が healthy に戻ったらブラウザーを再読込します。タスクは残ります。Web の公開先は 127.0.0.1:8080、API/DB は公開ポートなし（port コマンドの「公開されていない」というエラーは期待どおり）です。\n\n通常の down と再起動も試せます:"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "docker compose -f docker/compose.yaml down\ndocker compose -f docker/compose.yaml up -d",
+              "expected": "同じタスクが残ることを確認してから、画面の「削除」で検証用タスクを削除してください。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-6",
+          "kind": "practice",
+          "title": "実習: 5. 自動 API テストを実行する",
+          "body": "",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "docker compose -f docker/compose.yaml --profile test run --build --rm tests",
+              "expected": "テストは workboard_test という専用 PostgreSQL の tmpfs 上で migration・CRUD・入力エラー・health を確認します。終了コード 0、全テスト成功が期待結果です。学習用 DB のデータを削除しません。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-7",
+          "kind": "practice",
+          "title": "実習: 故障実験: DB 停止と復旧",
+          "body": "学習用環境を利用中のほかの人がいないことを確認してから実行します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "docker compose -f docker/compose.yaml stop db",
+              "expected": "PowerShell なら curl.exe、Bash なら curl を使って次の URL のステータスを確認します。PowerShell の curl は別コマンドの別名になり得るため curl.exe を明記します。"
+            },
+            {
+              "title": "手順 2 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -i http://localhost:8080/health/live\ncurl.exe -i http://localhost:8080/health/ready",
+              "expected": "期待結果は Liveness 200、Readiness 503。API の DB 接続は数秒で失敗し、画面でのタスク操作も失敗し得ます。API のコンテナが unhealthy になっても、Compose が自動で再起動するとは限りません。\n\n次で復旧し、Readiness が 200 に戻るまで待ちます。"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "docker compose -f docker/compose.yaml start db\ndocker compose -f docker/compose.yaml ps",
+              "expected": "API を再起動しなくても接続が回復することと、既存タスクが残ることを観察します。volume を消す実験は今回は行いません。 実施する場合は、対象の volume と失われるデータを確認し、削除の明示承認後に別途行います。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-8",
+          "kind": "practice",
+          "title": "実習: 後片付け",
+          "body": "",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "docker compose -f docker/compose.yaml --profile test down",
+              "expected": "学習用 volume は残ります。-v は付けません。テスト DB は tmpfs のためコンテナ削除で消えます。"
+            }
+          ]
+        }
+      ],
+      "diagram": {
+        "type": "compose",
+        "title": "コンテナ間の通信と保存先",
+        "caption": "ブラウザーはコンテナではありません。Compose の範囲とホストを分けて示します。",
+        "nodes": [
+          {
+            "id": "browser",
+            "label": "ブラウザー",
+            "resource": "browser",
+            "kind": "browser",
+            "sublabel": "ホストの localhost:8080",
+            "column": 0,
+            "group": "host"
+          },
+          {
+            "id": "web",
+            "label": "Web コンテナ",
+            "resource": "container",
+            "kind": "container",
+            "sublabel": "Nginx",
+            "column": 0,
+            "group": "compose"
+          },
+          {
+            "id": "api",
+            "label": "API コンテナ",
+            "resource": "container",
+            "kind": "container",
+            "sublabel": "FastAPI",
+            "column": 1,
+            "group": "compose"
+          },
+          {
+            "id": "db",
+            "label": "DB コンテナ",
+            "resource": "container",
+            "kind": "container",
+            "sublabel": "PostgreSQL",
+            "column": 2,
+            "group": "compose"
+          },
+          {
+            "id": "migration",
+            "label": "migration コンテナ",
+            "resource": "container",
+            "kind": "container",
+            "sublabel": "Alembic / 正常終了",
+            "column": 3,
+            "group": "compose"
+          },
+          {
+            "id": "volume",
+            "label": "named volume",
+            "resource": "storage.volume",
+            "kind": "volume",
+            "sublabel": "コンテナを削除しても残る保存領域",
+            "column": 2,
+            "group": "compose"
+          }
+        ],
+        "edges": [
+          {
+            "from": "browser",
+            "to": "web",
+            "label": "HTTP :8080",
+            "relation": "traffic"
+          },
+          {
+            "from": "web",
+            "to": "api",
+            "label": "/api/ HTTP",
+            "relation": "traffic"
+          },
+          {
+            "from": "api",
+            "to": "db",
+            "label": "SQL :5432",
+            "relation": "traffic"
+          },
+          {
+            "from": "db",
+            "to": "volume",
+            "label": "保存",
+            "relation": "storage"
+          },
+          {
+            "from": "migration",
+            "to": "db",
+            "label": "SQL / スキーマ準備",
+            "relation": "traffic"
+          },
+          {
+            "from": "db",
+            "to": "migration",
+            "label": "DB healthy",
+            "relation": "control"
+          },
+          {
+            "from": "migration",
+            "to": "api",
+            "label": "終了コード 0",
+            "relation": "control"
+          },
+          {
+            "from": "api",
+            "to": "web",
+            "label": "API ready",
+            "relation": "control"
+          }
+        ],
+        "groups": [
+          {
+            "id": "host",
+            "label": "ホスト上のブラウザー",
+            "kind": "external"
+          },
+          {
+            "id": "compose",
+            "label": "Docker Engine / Compose ネットワーク",
+            "kind": "external"
+          }
+        ],
+        "views": [
+          {
+            "id": "traffic",
+            "title": "通信と保存",
+            "description": "実線は HTTP/SQL。保存の線は DB と named volume の対応です。Kubernetes の Pod や Service はまだありません。",
+            "nodeIds": [
+              "browser",
+              "web",
+              "api",
+              "db",
+              "volume"
+            ],
+            "relations": [
+              "traffic",
+              "storage"
+            ]
+          },
+          {
+            "id": "startup",
+            "title": "起動条件",
+            "description": "Compose が準備状態と migration の終了を待ちます。破線は HTTP 通信ではありません。",
+            "nodeIds": [
+              "db",
+              "migration",
+              "api",
+              "web"
+            ],
+            "relations": [
+              "control"
+            ]
+          }
+        ],
+        "simulation": {
+          "api": [
+            "api"
+          ],
+          "database": [
+            "db",
+            "volume"
+          ],
+          "migration": [
+            "migration"
+          ]
+        }
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "なぜ Web・API・DB を一つのコンテナにまとめないのか？",
+          "rubric": [
+            "更新・再起動・役割を独立して管理できると説明する",
+            "コンテナ分割だけで冗長化やマイクロサービス化が完成するわけではないと理解する"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "`depends_on` の起動順だけで DB が SQL を受け付けることを保証できるか？",
+          "rubric": [
+            "起動順とSQL受付可能な状態を区別する",
+            "service_healthyとmigration正常終了の条件を区別し稼働中の接続保証ではないと説明する"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "コンテナ内の API が `localhost:5432` に接続すると、どこへ接続するか？",
+          "rubric": [
+            "localhostはAPIコンテナ自身を指す",
+            "DBへの接続はDBサービス名とポートを使う"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "API 再起動後にタスクが残るのは、API がデータを保持しているからか？",
+          "rubric": [
+            "APIは処理を行いDBがデータを保持すると説明する",
+            "PostgreSQLのnamed volumeがコンテナ外で残ると説明する"
+          ]
+        },
+        {
+          "id": "q5",
+          "prompt": "DB が止まったとき API の Liveness も失敗させると、何が起きるか？",
+          "rubric": [
+            "DB障害でAPI再起動を繰り返す無意味な連鎖を説明する",
+            "liveはプロセス、readyは受付可否と区別する"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "実行日・OS・シェル"
+        },
+        {
+          "id": "m2",
+          "label": "起動結果・migration の状態"
+        },
+        {
+          "id": "m3",
+          "label": "画面の CRUD・絞り込み"
+        },
+        {
+          "id": "m4",
+          "label": "ブラウザー再読込・API 再起動後のデータ"
+        },
+        {
+          "id": "m5",
+          "label": "down/up 後のデータ"
+        },
+        {
+          "id": "m6",
+          "label": "公開ポート"
+        },
+        {
+          "id": "m7",
+          "label": "自動テストの結果"
+        },
+        {
+          "id": "m8",
+          "label": "DB 停止時の live / ready と復旧"
+        },
+        {
+          "id": "m9",
+          "label": "後片付け・残った volume"
+        },
+        {
+          "id": "m10",
+          "label": "疑問・未解決事項"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 01 原本",
+          "path": "labs/01-compose-basics/README.md"
+        },
+        {
+          "label": "Compose初回準備",
+          "path": "README.md"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "slug": "kubernetes",
+      "title": "望ましい状態を保つ",
+      "subtitle": "kind・Pod・Service・一時DB",
+      "level": "local",
+      "implemented": true,
+      "estimatedMinutes": 60,
+      "summary": "Podが置き換わっても通信できる理由と、データまで復旧するとは限らない理由を学びます。",
+      "goals": [
+        "Control Plane・Node・Pod・ReplicaSet・Deployment の役割を区別する。",
+        "label/selector と Service DNS が、Pod の置き換えにどう対応するか観察する。",
+        "マニフェストの再適用と、Pod 削除後の自動復旧を確認する。",
+        "Compose の volume と、今回の一時 DB の保存期間の違いを説明する。"
+      ],
+      "concepts": [
+        {
+          "term": "Podとコンテナ",
+          "description": "PodはKubernetesの配置・実行の単位です。一つ以上のコンテナがネットワークとvolumeを共有します。",
+          "analogy": "同じ住所と共有設備を持つ作業室"
+        },
+        {
+          "term": "Deployment",
+          "description": "ReplicaSetを通して指定数のPodを維持し、更新を管理します。Podが失われると別のPodを作ります。",
+          "analogy": "必要人数を補充する現場の管理者"
+        },
+        {
+          "term": "ClusterIP Service",
+          "description": "selectorでPodを選び、クラスター内に安定した接続先を用意します。",
+          "analogy": "担当者が替わっても使える代表窓口"
+        },
+        {
+          "term": "emptyDir",
+          "description": "Podに属する一時volumeです。コンテナの再起動を越えて残っても、Pod削除では消えます。",
+          "analogy": "同じ作業室の中だけで使える棚"
+        },
+        {
+          "term": "JobとinitContainer",
+          "description": "Jobは完了を目指す一回の処理です。通常のinitContainerは同じPodの主コンテナより前に正常終了する必要があります。",
+          "analogy": "独立した準備作業と、開店前の室内準備の違い"
+        }
+      ],
+      "sections": [
+        {
+          "id": "observe",
+          "title": "既存クラスターから読み始める",
+          "body": "この環境のPhase 2は構築済みです。読み取りコマンドからPod・ReplicaSet・Deployment・Serviceを見比べます。各コマンドは専用contextを明示し、別クラスターと混同しないようにします。\n\nkindのNodeもローカルDocker内で動きます。Nodeの中にPod、その中にコンテナという階層です。アプリのコンテナイメージはComposeと共通でも、起動・維持する主体が変わります。",
+          "callout": "以下は手動実行用です。ポータルはコマンドを自動実行しません。既存Podの削除や再構築はここでは必要ありません。",
+          "steps": [
+            {
+              "title": "現在のシェルへ専用設定",
+              "description": "先頭のドットとスペースは現在のPowerShellへ設定を読み込む指定です。",
+              "command": ". .\\scripts\\kind-env.ps1",
+              "expected": "現在のシェルだけで専用KUBECONFIGと.toolsが使える。"
+            },
+            {
+              "title": "管理階層を一覧にする",
+              "description": "作られたPodと、それを維持するリソースを見ます。",
+              "command": "kubectl --context kind-workboard-lab -n workboard get pods,rs,deploy,svc",
+              "expected": "Web/API/DBが各1 Pod。Serviceが別リソースとして存在。"
+            },
+            {
+              "title": "転送先を確かめる",
+              "description": "selectorとPod labelが一致する結果をEndpointSliceで追います。",
+              "command": "kubectl --context kind-workboard-lab -n workboard get endpointslices -l kubernetes.io/service-name=workboard-api",
+              "expected": "API Serviceに対応するPodのアドレスが分かる。"
+            }
+          ]
+        },
+        {
+          "id": "network",
+          "title": "Serviceとport-forwardを分ける",
+          "body": "Web→APIの通信はClusterIP Serviceを利用します。ServiceのselectorとPodのlabelが一致しないと、期待するPodへ転送されません。PodがRunningであることだけでは通信の成功を保証しません。\n\nsvc/workboard-webを指定したport-forwardはselectorで選んだWeb Podへの一時トンネルです。ClusterIPそのものを外部公開する操作ではありません。WorkBoardはlocalhost:8080、学習ポータルはlocalhost:8765です。既存の転送を止めず、そのまま8080を利用できます。",
+          "callout": "port-forwardは常設の公開設定ではありません。接続しているWeb Podの置き換えでも終了する場合があります。"
+        },
+        {
+          "id": "lifecycle",
+          "title": "再作成はデータ復元ではない",
+          "body": "API Podを削除するとDeploymentが新しいPodを補います。DB PodとそのemptyDirが残るのでタスクは保持されます。PodのUIDは変わりますが、IPは再利用される場合もあります。\n\nDB Podを削除すると、新しいemptyDirでDBが立ち上がります。タスクだけでなくスキーマも失われます。完了済みmigration JobはDB再作成だけでは再実行されません。Jobを再実行してスキーマを作り直しても、元データの復元にはなりません。",
+          "callout": "DB削除実験はデータ消失を伴います。実行する場合はLab 02の条件・対象を確認し、失ってよいと判断してから別途行ってください。"
+        },
+        {
+          "id": "init",
+          "title": "initContainerで解ける範囲",
+          "body": "現在のPhase 2はmigration Jobを使っており、API PodにinitContainerはありません。比較として、initContainerは同じPodの主コンテナより前に順番に実行され、準備を終えてから主コンテナを起動できます。\n\nAPI PodのinitContainerでDBを準備したとしても、別のDB Podだけが再作成されたとき、既存API PodのinitContainerは自動で再実行されません。DB障害中の接続回復やmigrationの再実行方針は、別に設計する必要があります。\n\n/health/readyのSELECT 1はDB接続を確かめます。テーブルの存在やmigration完了まで調べるものではないので、readyが200でもCRUDが失敗する場面があります。"
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "Lab 01 完了、Docker Desktop の Linux コンテナエンジン、kubectl 1.34〜1.36、kind v0.33.0。今回のノードは Kubernetes v1.35.8 です。Docker にローカルノード1台を動かす CPU・メモリ・ディスクの空きが必要です。初回はイメージをダウンロードしますが AWS 費用はありません。\n\nこの DB はダミーデータ専用です。Compose の DB/volume/.env を使わず、Pod を削除するとデータは消えます。Phase 3 で永続化を導入します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 1. ツール導入とクラスター構築",
+          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。\n\n\nWindows PowerShell 5.1 以降で初回だけ実行します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File scripts/kind-install.ps1\npowershell -NoProfile -File scripts/kind-up.ps1",
+              "expected": "installer は公式 kind を取得し SHA-256 を検証して .tools/kind.exe に置きます。管理者権限や永続的な PATH 変更は不要です。構築スクリプトは Docker・kubectl の対応を確認し、専用 kubeconfig .kube/workboard-kind.yaml を作ります。既存クラスター・DB の削除はしません。同名クラスターだけあり、専用 kubeconfig がない場合は確認のため停止します。\n\n起動処理は以下の順です。固定秒数の sleep ではなく、実際の状態を待ちます。\n\n1. kind create cluster（存在しなければ作成）\n2. 同じ API/Web Dockerfile のビルド\n3. kind load docker-image でノードへイメージ投入\n4. Namespace・DB 適用 → DB Deployment の準備完了待ち\n5. migration Job 適用 → Complete 待ち\n6. Web/API 適用 → Deployment の準備完了待ち\n\n期待結果は Node が Ready、Deployment が各1 Pod、migration Job が Completed です。イメージ投入はホストの Docker と kind ノードのイメージ保存先が別であるため必要です。API/Web は imagePullPolicy: Never なので投入忘れは ErrImageNeverPull になります。PostgreSQL は IfNotPresent でノードが公式レジストリから取得します。ローカル学習用ビルドは --provenance=false とし、複数 platform・attestation の manifest をノードへ持ち込む問題を避けます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-3",
+          "kind": "practice",
+          "title": "実習: 2. 現在の PowerShell で対象を選び、状態を観察する",
+          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。\n\n\n構築済みのこの作業環境では、まずここから進めてください。 新しい PowerShell を開くたびに最初の行を実行します。先頭のドットとスペースは、設定を今のシェルへ読み込む指定です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": ". .\\scripts\\kind-env.ps1\nkubectl --context kind-workboard-lab get nodes\nkubectl --context kind-workboard-lab -n workboard get pods,rs,deploy,svc\nkubectl --context kind-workboard-lab -n workboard get pods --show-labels",
+              "expected": "kind-env.ps1 は今のシェルだけに .tools と専用 KUBECONFIG を設定します。標準 kubeconfig やシステム PATH は変更しません。Compose 用コンテナはこの一覧には出ません。\n\nAPI の所有関係も調べます。"
+            },
+            {
+              "title": "手順 2 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o wide\nkubectl --context kind-workboard-lab -n workboard get rs -l app=workboard-api -o wide\nkubectl --context kind-workboard-lab -n workboard describe deployment workboard-api\nkubectl --context kind-workboard-lab -n workboard describe service workboard-api\nkubectl --context kind-workboard-lab -n workboard get endpointslices -l kubernetes.io/service-name=workboard-api",
+              "expected": "Deployment → ReplicaSet → Pod の順に管理されます。Service の selector app=workboard-api と Pod の label を見比べてください。Service の ClusterIP と Pod IP は別です。EndpointSlice には転送先 Pod のアドレスが含まれます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-4",
+          "kind": "practice",
+          "title": "実習: 3. ブラウザーで同じアプリを使う",
+          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。\n\n\n8080 番を Compose 等で使っていないことを確認します。次のコマンドは実行中のまま残し、ブラウザーを別に開きます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-lab -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8080:80",
+              "expected": "8080:80 はホスト8080番から Service80番への転送です。Forwarding from 127.0.0.1:8080 -> 80 が期待結果。http://localhost:8080（http://localhost:8080） でダミータスク「kind の学習」を作り、編集・ステータス絞り込み・再読込を試してください。削除の確認は別のダミータスクで行い、「kind の学習」は次の実験用に残します。\n\nService を指定した port-forward は、selector から選ばれた Web Pod へトンネルします。ClusterIP 自体を外部公開する操作ではありません。Web から API への通信では実際に ClusterIP Service を使います。\n\n他の PowerShell で以下を実行すれば health も確認できます。"
+            },
+            {
+              "title": "手順 2 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -i http://localhost:8080/health/live\ncurl.exe -i http://localhost:8080/health/ready",
+              "expected": "どちらも200が期待結果です。port-forward は永続的な公開設定ではなく、コマンドを止めると接続できなくなります。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-5",
+          "kind": "practice",
+          "title": "実習: 4. API Pod を削除し、自動復旧を観察する",
+          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。\n\n\n別の PowerShell で専用設定を読み込み、現在の Pod の名前・UID・IP を記録します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": ". .\\scripts\\kind-env.ps1\nkubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP\nkubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-api\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-api --timeout=180s\nkubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP",
+              "expected": "名前・UID が変わり、Pod が1つに戻ります。IP は再利用される場合もあるので「必ず変わる」とは判断しません。ブラウザー再読込でタスクが残り、同じ URL から操作できることを確認します。API Pod を消しただけなので DB は残っています。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-6",
+          "kind": "practice",
+          "title": "実習: 5. マニフェストを再適用する",
+          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-lab apply -f kubernetes/kind/namespace.yaml -f kubernetes/kind/postgres.yaml -f kubernetes/kind/migrate.yaml -f kubernetes/kind/app.yaml",
+              "expected": "定義を変更していなければ基本的に unchanged です。再適用だけで毎回新しい Pod が作られるわけではありません。完了済み migration Job も再実行されません。\n\nアプリコードを変更して構築スクリプトを再実行した場合は、同じ :kind タグを使うため、以下で新しいイメージから Pod を作り直します。"
+            },
+            {
+              "title": "手順 2 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-lab -n workboard rollout restart deployment/workboard-api deployment/workboard-web",
+              "expected": "Web Pod を置き換えると port-forward の接続も終了することがあります。その場合は手順3を再実行します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-7",
+          "kind": "practice",
+          "title": "実習: 故障実験: 一時 DB とデータ消失",
+          "body": "このラボで作ったダミータスクを失ってよいと確認できた場合だけ実行してください。 次の DB Pod 削除はタスクとスキーマを消します。Compose の DB/volume には影響しません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-postgres\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-postgres --timeout=180s",
+              "expected": "DB は新しい emptyDir で起動します。既存の migration Job は完了済みなので、そのままではテーブルがありません。/health/ready は接続の SELECT 1 だけを確認するため200に戻る場合もありますが、CRUD が使えることまでは保証しません。\n\nスキーマを戻すには Job だけを削除して再適用します。"
+            },
+            {
+              "title": "手順 2 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-lab -n workboard delete job workboard-migrate\nkubectl --context kind-workboard-lab apply -f kubernetes/kind/migrate.yaml\nkubectl --context kind-workboard-lab -n workboard wait --for=condition=complete job/workboard-migrate --timeout=180s",
+              "expected": "ブラウザーを再読込すると一覧が空になります。タスクを新規作成して動作復旧を確認します。元のタスクの復元ではありません。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-8",
+          "kind": "practice",
+          "title": "実習: 失敗時に確認すること",
+          "body": "- kind が見つからない: installer の後、この PowerShell で kind-env.ps1 を読み込んだか。\n- 接続先がない/証明書エラー: 専用 KUBECONFIG と context を使っているか。他のクラスターへ切り替えて試さない。\n- ErrImageNeverPull: kind load docker-image ... --name workboard-lab が成功したか。\n- Job が失敗: kubectl --context kind-workboard-lab -n workboard logs job/workboard-migrate と DB の状態を確認。\n- API が動かない: describe pod、logs deployment/workboard-api、get events --sort-by=.metadata.creationTimestamp を同じ context/Namespace で確認。\n- Service から接続できない: selector・label・EndpointSlice、readiness、アプリの待受ポートを確認。\n- Web から502: Nginx の接続先と DNS、API の準備状態を確認。Compose の Docker DNS アドレスを kind で固定しない。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-9",
+          "kind": "practice",
+          "title": "実習: Linux / macOS / WSL での再現",
+          "body": "Windows 用スクリプトは使わず、公式 release の OS/CPU に合う kind v0.33.0 と .sha256sum を取得・照合し、実行可能にして .tools/kind に置きます。公式導入手順（https://kind.sigs.k8s.io/docs/user/quick-start/#installation） に従ってください。kubectl は1.34〜1.36を使います。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Bash",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "export PATH=\"$PWD/.tools:$PATH\"\nexport KUBECONFIG=\"$PWD/.kube/workboard-kind.yaml\"\nmkdir -p .kube\nkind create cluster --name workboard-lab --config kubernetes/kind/cluster.yaml --kubeconfig \"$KUBECONFIG\" --wait 180s\ndocker build --provenance=false --target runtime -t workboard-api:kind app/api\ndocker build --provenance=false -t workboard-web:kind app/web\nkind load docker-image workboard-api:kind workboard-web:kind --name workboard-lab\nkubectl --context kind-workboard-lab apply -f kubernetes/kind/namespace.yaml -f kubernetes/kind/postgres.yaml\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-postgres --timeout=180s\nkubectl --context kind-workboard-lab apply -f kubernetes/kind/migrate.yaml\nkubectl --context kind-workboard-lab -n workboard wait --for=condition=complete job/workboard-migrate --timeout=180s\nkubectl --context kind-workboard-lab apply -f kubernetes/kind/app.yaml\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-api --timeout=180s\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-web --timeout=180s",
+              "expected": "初回構築用です。同名クラスターがある場合は作成を繰り返さず、対象と kubeconfig を確認します。以後の kubectl 操作は上の手順と共通です。Bash の HTTP 確認には curl.exe の代わりに curl を使います。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-10",
+          "kind": "practice",
+          "title": "実習: 後片付け・再構築",
+          "body": "port-forward の PowerShell で Ctrl+C を押すとブラウザーの入口を閉じます。これはクラスターの停止ではなく、Node とアプリは動き続けます。\n\nkind クラスターを削除すると今回の DB データも失います。クラスター名と消失するデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / PowerShell",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kind delete cluster --name workboard-lab",
+              "expected": "削除を実施した場合、専用 kubeconfig が残っていれば対象を確認してそのファイルだけを削除してから、構築スクリプトを実行します。他の kubeconfig は削除しません。作り直したクラスターは空の DB で始まります。Compose の volume は残ります。"
+            }
+          ]
+        }
+      ],
+      "diagram": {
+        "type": "kubernetes",
+        "title": "通信・管理・データの寿命を分ける",
+        "caption": "Node は実行場所、Namespace は論理スコープで、親子関係ではありません。Node 枠内の Pod も workboard Namespace に属します。kind は単一の control-plane 兼 worker です。",
+        "nodes": [
+          {
+            "id": "browser",
+            "label": "ブラウザー",
+            "resource": "browser",
+            "kind": "browser",
+            "sublabel": "ホストの localhost:8080",
+            "column": 0,
+            "group": "host"
+          },
+          {
+            "id": "web-service",
+            "label": "Web Service",
+            "resource": "kubernetes.service",
+            "kind": "service",
+            "sublabel": "Pod 外の論理的な接続先",
+            "column": 0,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "web-deployment",
+            "label": "Web Deployment",
+            "resource": "kubernetes.deployment",
+            "kind": "deployment",
+            "sublabel": "workboard-web",
+            "column": 0,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "web-rs",
+            "label": "Web ReplicaSet",
+            "resource": "kubernetes.replicaset",
+            "kind": "replicaset",
+            "sublabel": "必要な Pod 数を維持する宣言",
+            "column": 0,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "web-pod",
+            "label": "Web Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 0,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "web",
+                "technology": "Nginx",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "api-service",
+            "label": "API Service",
+            "resource": "kubernetes.service",
+            "kind": "service",
+            "sublabel": "Pod 外の論理的な接続先",
+            "column": 1,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "api-deployment",
+            "label": "API Deployment",
+            "resource": "kubernetes.deployment",
+            "kind": "deployment",
+            "sublabel": "workboard-api",
+            "column": 1,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "api-rs",
+            "label": "API ReplicaSet",
+            "resource": "kubernetes.replicaset",
+            "kind": "replicaset",
+            "sublabel": "必要な Pod 数を維持する宣言",
+            "column": 1,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "api-pod",
+            "label": "API Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 1,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "api",
+                "technology": "FastAPI",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "db-service",
+            "label": "DB Service",
+            "resource": "kubernetes.service",
+            "kind": "service",
+            "sublabel": "Pod 外の論理的な接続先",
+            "column": 2,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "db-deployment",
+            "label": "DB Deployment",
+            "resource": "kubernetes.deployment",
+            "kind": "deployment",
+            "sublabel": "workboard-postgres",
+            "column": 2,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "db-rs",
+            "label": "DB ReplicaSet",
+            "resource": "kubernetes.replicaset",
+            "kind": "replicaset",
+            "sublabel": "必要な Pod 数を維持する宣言",
+            "column": 2,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "db-pod",
+            "label": "DB Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 2,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "postgres",
+                "technology": "PostgreSQL",
+                "resource": "container"
+              },
+              {
+                "label": "db-data",
+                "technology": "emptyDir / この Pod の寿命",
+                "resource": "storage.emptydir"
+              }
+            ]
+          },
+          {
+            "id": "migrate-job",
+            "label": "migration Job",
+            "resource": "kubernetes.job",
+            "kind": "job",
+            "sublabel": "workboard-migrate / 通常 Complete",
+            "column": 3,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "migrate-pod",
+            "label": "migration Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 3,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "migrate",
+                "technology": "Alembic / 通常は実行終了",
+                "resource": "container"
+              }
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "from": "browser",
+            "to": "web-service",
+            "label": "転送対象の指定",
+            "relation": "configuration"
+          },
+          {
+            "from": "browser",
+            "to": "web-pod",
+            "label": "HTTP / port-forward",
+            "relation": "traffic"
+          },
+          {
+            "from": "web-service",
+            "to": "web-pod",
+            "label": "selector",
+            "relation": "configuration"
+          },
+          {
+            "from": "web-deployment",
+            "to": "web-rs",
+            "label": "所有",
+            "relation": "ownership"
+          },
+          {
+            "from": "web-rs",
+            "to": "web-pod",
+            "label": "所有 / Pod 数の維持",
+            "relation": "ownership"
+          },
+          {
+            "from": "api-deployment",
+            "to": "api-rs",
+            "label": "所有",
+            "relation": "ownership"
+          },
+          {
+            "from": "api-rs",
+            "to": "api-pod",
+            "label": "所有 / Pod 数の維持",
+            "relation": "ownership"
+          },
+          {
+            "from": "db-deployment",
+            "to": "db-rs",
+            "label": "所有",
+            "relation": "ownership"
+          },
+          {
+            "from": "db-rs",
+            "to": "db-pod",
+            "label": "所有 / Pod 数の維持",
+            "relation": "ownership"
+          },
+          {
+            "from": "migrate-job",
+            "to": "migrate-pod",
+            "label": "所有 / 完了を追跡",
+            "relation": "ownership"
+          },
+          {
+            "from": "migrate-pod",
+            "to": "db-service",
+            "label": "SQL / スキーマ準備",
+            "relation": "traffic"
+          },
+          {
+            "from": "web-pod",
+            "to": "api-service",
+            "label": "/api/ HTTP",
+            "relation": "traffic"
+          },
+          {
+            "from": "api-service",
+            "to": "api-pod",
+            "label": "HTTP / selector",
+            "relation": "traffic"
+          },
+          {
+            "from": "api-pod",
+            "to": "db-service",
+            "label": "SQL :5432",
+            "relation": "traffic"
+          },
+          {
+            "from": "db-service",
+            "to": "db-pod",
+            "label": "SQL / selector",
+            "relation": "traffic"
+          }
+        ],
+        "groups": [
+          {
+            "id": "host",
+            "label": "ホスト上のブラウザー",
+            "kind": "external"
+          },
+          {
+            "id": "cluster",
+            "label": "Kubernetes クラスター",
+            "kind": "cluster"
+          },
+          {
+            "id": "namespace",
+            "label": "Namespace: workboard（論理スコープ）",
+            "kind": "namespace",
+            "parentId": "cluster"
+          },
+          {
+            "id": "management",
+            "label": "API に保存される宣言・管理オブジェクト",
+            "kind": "management",
+            "parentId": "namespace"
+          },
+          {
+            "id": "runtime",
+            "label": "単一 Node / control-plane 兼 worker",
+            "kind": "node",
+            "parentId": "cluster"
+          }
+        ],
+        "views": [
+          {
+            "id": "traffic",
+            "title": "通信の経路",
+            "description": "実線は HTTP/SQL。port-forward は Service を指定して選んだ Web Pod へのトンネルで、ClusterIP 自体の外部公開ではありません。Deployment/ReplicaSet は通信を中継しません。",
+            "nodeIds": [
+              "browser",
+              "web-service",
+              "web-pod",
+              "api-service",
+              "api-pod",
+              "db-service",
+              "db-pod"
+            ],
+            "relations": [
+              "traffic",
+              "configuration"
+            ]
+          },
+          {
+            "id": "management",
+            "title": "管理と所有",
+            "description": "破線は API オブジェクトの所有関係です。Deployment/ReplicaSet はコンテナではなく宣言で、Control Plane のコントローラーがこの状態を調整します。Job の Pod は通常終了済みです。",
+            "nodeIds": [
+              "web-deployment",
+              "web-rs",
+              "web-pod",
+              "api-deployment",
+              "api-rs",
+              "api-pod",
+              "db-deployment",
+              "db-rs",
+              "db-pod",
+              "migrate-job",
+              "migrate-pod"
+            ],
+            "relations": [
+              "ownership"
+            ]
+          },
+          {
+            "id": "database",
+            "title": "DB の寿命と初期化",
+            "description": "DB Pod 内の emptyDir はその Pod と一緒に失われます。Job の再実行はスキーマの再作成であり、タスクの復元ではありません。",
+            "nodeIds": [
+              "api-pod",
+              "db-service",
+              "db-pod",
+              "migrate-job",
+              "migrate-pod"
+            ],
+            "relations": [
+              "traffic",
+              "ownership"
+            ]
+          }
+        ],
+        "simulation": {
+          "api": [
+            "api-pod"
+          ],
+          "database": [
+            "db-pod"
+          ],
+          "migration": [
+            "migrate-job",
+            "migrate-pod"
+          ]
+        }
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "Pod を直接作る方法と、Deployment で管理する方法は何が違うか？",
+          "rubric": [
+            "Podはコンテナの実行単位と説明する",
+            "Deployment→ReplicaSet→Podの制御と置き換えを説明する"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "Pod の IP を直接使わず Service を使う理由は何か？",
+          "rubric": [
+            "Podの置き換えで名前やIPが変わり得る",
+            "Serviceの安定した名前とselectorによる転送先選択を説明する"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "Service の selector と Pod の label が一致しないとどうなるか？",
+          "rubric": [
+            "対象Podが選ばれずEndpointSliceに期待する転送先がないと説明する",
+            "PodがRunningでもService通信が成功するとは限らないと説明する"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "API Pod を削除した場合と、DB Pod を削除した場合でデータはどう変わるか？",
+          "rubric": [
+            "API Pod削除では独立したDBのデータは残る",
+            "DB Pod削除ではemptyDirとスキーマが消えmigrationの再実行が必要と説明する"
+          ]
+        },
+        {
+          "id": "q5",
+          "prompt": "`docker compose up` と `kubectl apply` は、どちらも定義を渡すが、稼働後に誰が状態を維持するか？",
+          "rubric": [
+            "Kubernetesはコントローラーが継続的に望ましい状態へ近づける",
+            "Composeの起動操作や再起動ポリシーとKubernetesの継続的な制御を区別する"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "実行日・OS・シェル"
+        },
+        {
+          "id": "m2",
+          "label": "kind / kubectl / Kubernetes バージョン"
+        },
+        {
+          "id": "m3",
+          "label": "Node・Deployment・ReplicaSet・Pod の状態"
+        },
+        {
+          "id": "m4",
+          "label": "Service の selector と Pod label"
+        },
+        {
+          "id": "m5",
+          "label": "画面の CRUD・絞り込み・再読込"
+        },
+        {
+          "id": "m6",
+          "label": "API Pod 削除前後の名前・UID・IP"
+        },
+        {
+          "id": "m7",
+          "label": "API Pod 削除後の Service とデータ"
+        },
+        {
+          "id": "m8",
+          "label": "マニフェスト再適用"
+        },
+        {
+          "id": "m9",
+          "label": "DB 再作成と migration 再実行"
+        },
+        {
+          "id": "m10",
+          "label": "Compose との責任範囲の違い"
+        },
+        {
+          "id": "m11",
+          "label": "後片付け・残したクラスター"
+        },
+        {
+          "id": "m12",
+          "label": "疑問・未解決事項"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 02 原本",
+          "path": "labs/02-kubernetes-basics/README.md"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "slug": "storage",
+      "title": "設定とデータを切り離す",
+      "subtitle": "予習 / StatefulSet・PVC・Secret",
+      "level": "local",
+      "implemented": false,
+      "estimatedMinutes": 35,
+      "summary": "Podがなくなっても守るデータと、別途必要な保護を整理します。",
+      "goals": [
+        "Namespace、ConfigMap、Secret、StatefulSet、PVC/PV、StorageClass、Kustomize、migration。",
+        "実装前に設計条件と検証方法を説明できる"
+      ],
+      "concepts": [
+        {
+          "term": "PVC / PV",
+          "description": "アプリの保存先要求と、それに応える保存領域を分けます。",
+          "analogy": "倉庫の利用申込書と割り当てられた棚"
+        },
+        {
+          "term": "StatefulSet",
+          "description": "安定した識別子やストレージとの対応を持つPodを管理します。",
+          "analogy": "名前付きの担当席と専用保管庫"
+        },
+        {
+          "term": "ConfigMap / Secret",
+          "description": "設定と秘密情報をアプリのイメージから分離します。Secretにも権限設計が必要です。",
+          "analogy": "共有手順書と配布先を絞った鍵"
+        }
+      ],
+      "sections": [
+        {
+          "id": "preview",
+          "title": "この章は予習です",
+          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
+        },
+        {
+          "id": "persistence",
+          "title": "Podの寿命を越える保存先",
+          "body": "emptyDirからPVCへ移すと、Podの置き換えと保存領域の寿命を分離できます。StatefulSetはDBの識別子や保存先の対応を扱いやすくしますが、バックアップやDB自体の可用性を自動で完成させません。\n\n設計書はStorageClassを事前確認する方針です。ローカルノードに依存する保存先なら、ノード喪失時の復旧は別課題になります。"
+        },
+        {
+          "id": "config",
+          "title": "設定差分を追える形にする",
+          "body": "Kustomizeのbaseに共通構成、overlayに環境差分を置く計画です。Secretに値を入れても、読み取り可能な人・Pod・保存時の保護は別途考えます。\n\n実装時には『Pod削除後に同じタスクが残るか』『PVCがどのPVに結び付くか』『誤削除から戻せるか』を別々に観察します。"
+        }
+      ],
+      "diagram": {
+        "type": "storage",
+        "title": "Pod の寿命と保存先を分離する",
+        "caption": "Phase 3 の予習です。API の管理チェーンなど、今回の焦点以外は省略しています。Node と Namespace は直交します。",
+        "nodes": [
+          {
+            "id": "api-pod",
+            "label": "API Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 0,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "api",
+                "technology": "FastAPI",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "db-service",
+            "label": "DB Service",
+            "resource": "kubernetes.service",
+            "kind": "service",
+            "sublabel": "安定した論理接続先",
+            "column": 1,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "db-pod",
+            "label": "DB Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 1,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "postgres",
+                "technology": "PostgreSQL",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "sts",
+            "label": "DB StatefulSet",
+            "resource": "kubernetes.statefulset",
+            "kind": "statefulset",
+            "sublabel": "Pod の識別子と保存先の対応",
+            "column": 1,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "pvc",
+            "label": "PVC",
+            "resource": "kubernetes.pvc",
+            "kind": "pvc",
+            "sublabel": "Namespace 内の保存先要求",
+            "column": 2,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "pv",
+            "label": "PV",
+            "resource": "kubernetes.pv",
+            "kind": "pv",
+            "sublabel": "cluster scope の保存領域オブジェクト",
+            "column": 2,
+            "group": "cluster"
+          },
+          {
+            "id": "config",
+            "label": "ConfigMap",
+            "resource": "kubernetes.configmap",
+            "kind": "configmap",
+            "sublabel": "設定値",
+            "column": 0,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "secret",
+            "label": "Secret",
+            "resource": "kubernetes.secret",
+            "kind": "secret",
+            "sublabel": "配布権限・保存時保護は別途必要",
+            "column": 1,
+            "group": "namespace",
+            "namespace": "workboard"
+          }
+        ],
+        "edges": [
+          {
+            "from": "api-pod",
+            "to": "db-service",
+            "label": "SQL",
+            "relation": "traffic"
+          },
+          {
+            "from": "db-service",
+            "to": "db-pod",
+            "label": "SQL / selector",
+            "relation": "traffic"
+          },
+          {
+            "from": "sts",
+            "to": "db-pod",
+            "label": "所有 / 安定した識別子",
+            "relation": "ownership"
+          },
+          {
+            "from": "db-pod",
+            "to": "pvc",
+            "label": "mount に使用",
+            "relation": "storage"
+          },
+          {
+            "from": "pvc",
+            "to": "pv",
+            "label": "バインド",
+            "relation": "storage"
+          },
+          {
+            "from": "config",
+            "to": "api-pod",
+            "label": "設定を注入",
+            "relation": "configuration"
+          },
+          {
+            "from": "secret",
+            "to": "api-pod",
+            "label": "接続情報を配布",
+            "relation": "configuration"
+          },
+          {
+            "from": "secret",
+            "to": "db-pod",
+            "label": "接続情報を配布",
+            "relation": "configuration"
+          }
+        ],
+        "groups": [
+          {
+            "id": "host",
+            "label": "ホスト上のブラウザー",
+            "kind": "external"
+          },
+          {
+            "id": "cluster",
+            "label": "Kubernetes クラスター",
+            "kind": "cluster"
+          },
+          {
+            "id": "namespace",
+            "label": "Namespace: workboard（論理スコープ）",
+            "kind": "namespace",
+            "parentId": "cluster"
+          },
+          {
+            "id": "management",
+            "label": "API に保存される宣言・管理オブジェクト",
+            "kind": "management",
+            "parentId": "namespace"
+          },
+          {
+            "id": "runtime",
+            "label": "保存先を利用する Node / 詳細は実装時に決定",
+            "kind": "node",
+            "parentId": "cluster"
+          }
+        ],
+        "views": [
+          {
+            "id": "storage",
+            "title": "保存先とスコープ",
+            "description": "予習の DB 周辺図です。StatefulSet は ReplicaSet を介しません。PVC は Namespace 内、PV と Node は cluster scope です。PV は物理ディスクそのものの絵ではありません。",
+            "nodeIds": [
+              "api-pod",
+              "db-service",
+              "db-pod",
+              "sts",
+              "pvc",
+              "pv"
+            ],
+            "relations": [
+              "traffic",
+              "ownership",
+              "storage"
+            ]
+          },
+          {
+            "id": "configuration",
+            "title": "設定の配布",
+            "description": "予習。ConfigMap/Secret は実行中のコンテナではなく、API に保存される設定オブジェクトです。",
+            "nodeIds": [
+              "config",
+              "secret",
+              "api-pod",
+              "db-pod"
+            ],
+            "relations": [
+              "configuration"
+            ]
+          }
+        ],
+        "simulation": {
+          "api": [
+            "api-pod"
+          ],
+          "database": [
+            "db-pod",
+            "pvc",
+            "pv"
+          ],
+          "migration": []
+        }
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "PostgreSQL をなぜ StatefulSet にするのか？",
+          "rubric": [
+            "安定した識別子とストレージを扱うStatefulSetの用途を説明する",
+            "StatefulSetだけでバックアップやDBの高可用性は完成しないと説明する"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "PVC は何を守り、何を守らないのか？",
+          "rubric": [
+            "Podの寿命から保存先を分離すると説明する",
+            "ノード喪失・誤削除・バックアップの課題を区別する"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "Kustomize の overlay は何を変え、何を生成しないのか（テンプレートエンジンとの違い）？",
+          "rubric": [
+            "overlayはbaseのYAMLへのパッチで環境差分を表すと説明する",
+            "変数展開や条件分岐を行うテンプレートエンジンではなく、存在しないリソースを自動では作らないと説明する"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "理解した概念"
+        },
+        {
+          "id": "m2",
+          "label": "想定する構成と採用理由"
+        },
+        {
+          "id": "m3",
+          "label": "必要な実験と期待結果"
+        },
+        {
+          "id": "m4",
+          "label": "疑問・未解決事項"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "slug": "scaling",
+      "title": "増やす・更新する・耐える",
+      "subtitle": "予習 / Probe・HPA・配置制御",
+      "level": "local",
+      "implemented": false,
+      "estimatedMinutes": 35,
+      "summary": "レプリカ数だけでは語れない可用性と、計測に基づく調整を学びます。",
+      "goals": [
+        "Liveness / Readiness / Startup probes、resource requests/limits、Rolling Update、HPA、PDB、Pod 配置制御。",
+        "実装前に設計条件と検証方法を説明できる"
+      ],
+      "concepts": [
+        {
+          "term": "Probe",
+          "description": "生存・受付可否・起動の確認を目的ごとに分けます。",
+          "analogy": "呼吸確認・受付状況・開店準備の別々の点検"
+        },
+        {
+          "term": "HPA",
+          "description": "指標をもとにワークロードのレプリカ数を調整します。",
+          "analogy": "注文数に応じた窓口人数の調整"
+        },
+        {
+          "term": "requests / limits",
+          "description": "配置に必要な資源の見積もりと、利用の上限を設定します。",
+          "analogy": "予約した席数と使用可能な広さ"
+        }
+      ],
+      "sections": [
+        {
+          "id": "preview",
+          "title": "この章は予習です",
+          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
+        },
+        {
+          "id": "availability",
+          "title": "同じ場所に増やすだけでは足りない",
+          "body": "APIを3 Podにしても同じNodeに載っていれば、そのNodeの故障で全て止まり得ます。ノードやAZへの分散、DBの単一障害点、更新時に残す受付能力を組み合わせて考えます。\n\nPDBは自発的な中断の許容数を扱う仕組みです。突然のNode故障まで防止する保証ではありません。"
+        },
+        {
+          "id": "measurement",
+          "title": "測ってから数値を決める",
+          "body": "HPAのための指標を得るにはmetrics-server等の前提が必要です。CPU負荷・応答時間・Pod数・イベントを同じ時間軸で記録して判断します。\n\nRolling Updateとrollbackでは、更新中のHTTP応答と残っているPod数を観察します。動いていない実験の復旧時間を推測で記録しないことが大切です。"
+        }
+      ],
+      "diagram": {
+        "type": "scaling",
+        "title": "通信・レプリカ制御・Node 配置",
+        "caption": "Phase 4 の予習。API 部分の拡大図で、DB/Web は省略しています。",
+        "nodes": [
+          {
+            "id": "metrics",
+            "label": "CPU 指標",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "metrics-server 等から得る値",
+            "column": 0,
+            "group": "cluster"
+          },
+          {
+            "id": "hpa",
+            "label": "HPA",
+            "resource": "kubernetes.hpa",
+            "kind": "hpa",
+            "sublabel": "replicas を調整する宣言",
+            "column": 0,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "deploy",
+            "label": "API Deployment",
+            "resource": "kubernetes.deployment",
+            "kind": "deployment",
+            "sublabel": "更新方針と必要数",
+            "column": 1,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "rs",
+            "label": "API ReplicaSet",
+            "resource": "kubernetes.replicaset",
+            "kind": "replicaset",
+            "sublabel": "Pod 数を維持",
+            "column": 1,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "service",
+            "label": "API Service",
+            "resource": "kubernetes.service",
+            "kind": "service",
+            "sublabel": "準備できた Pod を選択",
+            "column": 0,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "api-a",
+            "label": "API Pod A",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 0,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "api-a",
+                "technology": "FastAPI",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "api-b",
+            "label": "API Pod B",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 0,
+            "group": "node-b",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "api-b",
+                "technology": "FastAPI",
+                "resource": "container"
+              }
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "from": "metrics",
+            "to": "hpa",
+            "label": "判断材料",
+            "relation": "configuration"
+          },
+          {
+            "from": "hpa",
+            "to": "deploy",
+            "label": "replicas を調整",
+            "relation": "control"
+          },
+          {
+            "from": "deploy",
+            "to": "rs",
+            "label": "所有",
+            "relation": "ownership"
+          },
+          {
+            "from": "rs",
+            "to": "api-a",
+            "label": "所有",
+            "relation": "ownership"
+          },
+          {
+            "from": "rs",
+            "to": "api-b",
+            "label": "所有",
+            "relation": "ownership"
+          },
+          {
+            "from": "service",
+            "to": "api-a",
+            "label": "HTTP",
+            "relation": "traffic"
+          },
+          {
+            "from": "service",
+            "to": "api-b",
+            "label": "HTTP",
+            "relation": "traffic"
+          }
+        ],
+        "groups": [
+          {
+            "id": "host",
+            "label": "ホスト上のブラウザー",
+            "kind": "external"
+          },
+          {
+            "id": "cluster",
+            "label": "Kubernetes クラスター",
+            "kind": "cluster"
+          },
+          {
+            "id": "namespace",
+            "label": "Namespace: workboard（論理スコープ）",
+            "kind": "namespace",
+            "parentId": "cluster"
+          },
+          {
+            "id": "management",
+            "label": "API に保存される宣言・管理オブジェクト",
+            "kind": "management",
+            "parentId": "namespace"
+          },
+          {
+            "id": "runtime",
+            "label": "Node A / 実行場所",
+            "kind": "node",
+            "parentId": "cluster"
+          },
+          {
+            "id": "node-b",
+            "label": "Node B / 実行場所",
+            "kind": "node",
+            "parentId": "cluster"
+          }
+        ],
+        "views": [
+          {
+            "id": "traffic",
+            "title": "通信と配置",
+            "description": "予習の API 拡大図です。Service は Node 内のプロセスではありません。2 Pod が異なる Node に配置される条件は別途設計が必要です。",
+            "nodeIds": [
+              "service",
+              "api-a",
+              "api-b"
+            ],
+            "relations": [
+              "traffic"
+            ]
+          },
+          {
+            "id": "control",
+            "title": "数を調整する関係",
+            "description": "指標→HPA→Deployment は制御。Deployment→ReplicaSet→Pod は所有関係です。HPA は Node 台数を直接増やしません。",
+            "nodeIds": [
+              "metrics",
+              "hpa",
+              "deploy",
+              "rs",
+              "api-a",
+              "api-b"
+            ],
+            "relations": [
+              "configuration",
+              "control",
+              "ownership"
+            ]
+          }
+        ]
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "レプリカが 3 つでもノードが 1 つなら何が単一障害点か？",
+          "rubric": [
+            "同一ノードの障害で全レプリカが停止し得ると説明する",
+            "ノードやAZへの分散とDBの単一障害点も考える"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "HPA は Node の台数まで増やすのか？",
+          "rubric": [
+            "HPAは主にワークロードのレプリカ数を調整すると説明する",
+            "ノード容量の追加は別の仕組みであると説明する"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "理解した概念"
+        },
+        {
+          "id": "m2",
+          "label": "想定する構成と採用理由"
+        },
+        {
+          "id": "m3",
+          "label": "必要な実験と期待結果"
+        },
+        {
+          "id": "m4",
+          "label": "疑問・未解決事項"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "slug": "security",
+      "title": "権限と通信を絞る",
+      "subtitle": "予習 / RBAC・NetworkPolicy・診断",
+      "level": "local",
+      "implemented": false,
+      "estimatedMinutes": 35,
+      "summary": "誰が何をできるかと、どこへ通信できるかを別々に考えます。",
+      "goals": [
+        "ServiceAccount、RBAC、NetworkPolicy、Pod Security Standards、非 root 実行、イメージ管理、診断フロー。任意で補助 CLI の k9s。",
+        "実装前に設計条件と検証方法を説明できる"
+      ],
+      "concepts": [
+        {
+          "term": "RBAC",
+          "description": "Kubernetes APIへの操作権限を役割と関連付けます。",
+          "analogy": "役職ごとの操作許可証"
+        },
+        {
+          "term": "ServiceAccount",
+          "description": "Pod内の処理がKubernetes APIを利用するときの主体です。",
+          "analogy": "作業員本人とは別の設備用身分証"
+        },
+        {
+          "term": "NetworkPolicy",
+          "description": "対応CNIのもとでPod間等の通信許可を制御します。",
+          "analogy": "部屋の間に置く通行ルール"
+        }
+      ],
+      "sections": [
+        {
+          "id": "preview",
+          "title": "この章は予習です",
+          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
+        },
+        {
+          "id": "boundaries",
+          "title": "権限と通信は別の境界",
+          "body": "RBACでAPI操作を制限しても、アプリの通信まで自動的に閉じるわけではありません。NetworkPolicyを定義しても、CNIが処理しなければ期待どおりに遮断されません。\n\nSecretの読み取り権限、実行ユーザー、コンテナ権限、イメージを合わせて考えます。"
+        },
+        {
+          "id": "diagnose",
+          "title": "症状から層を切り分ける",
+          "body": "イメージ取得失敗ならイベントとタグ、通信失敗ならselector・EndpointSlice・DNS、権限不足なら主体とRoleBindingを追います。\n\n実装時には再現条件・観察したログ・原因・復旧手順をRunbookに残す計画です。通信を拒否できたという結論には、許可と拒否の両方の試験が必要です。"
+        }
+      ],
+      "diagram": {
+        "type": "security",
+        "title": "API 権限とアプリ通信を分ける",
+        "caption": "Phase 5 の予習。Namespace の権限と Pod の実行場所を区別して描きます。",
+        "nodes": [
+          {
+            "id": "user",
+            "label": "利用者",
+            "resource": "identity",
+            "kind": "identity",
+            "sublabel": "Kubernetes API を操作する主体",
+            "column": 0,
+            "group": "host"
+          },
+          {
+            "id": "sa",
+            "label": "ServiceAccount",
+            "resource": "kubernetes.serviceaccount",
+            "kind": "serviceaccount",
+            "sublabel": "ワークロードの API アクセス主体",
+            "column": 0,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "role",
+            "label": "Role / RoleBinding",
+            "resource": "kubernetes.role",
+            "kind": "role",
+            "sublabel": "Namespace 内の認可設定",
+            "column": 1,
+            "group": "management",
+            "namespace": "workboard"
+          },
+          {
+            "id": "kapi",
+            "label": "Kubernetes API",
+            "resource": "kubernetes.api",
+            "kind": "api",
+            "sublabel": "Control Plane の API",
+            "column": 2,
+            "group": "cluster"
+          },
+          {
+            "id": "web-pod",
+            "label": "Web Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 0,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "web",
+                "technology": "Nginx",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "api-service",
+            "label": "API Service",
+            "resource": "kubernetes.service",
+            "kind": "service",
+            "sublabel": "HTTP の接続先",
+            "column": 1,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "api-pod",
+            "label": "API Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 1,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "api",
+                "technology": "FastAPI",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "policy",
+            "label": "NetworkPolicy",
+            "resource": "kubernetes.networkpolicy",
+            "kind": "networkpolicy",
+            "sublabel": "対応 CNI が適用する通信規則",
+            "column": 2,
+            "group": "namespace",
+            "namespace": "workboard"
+          }
+        ],
+        "edges": [
+          {
+            "from": "user",
+            "to": "kapi",
+            "label": "API 操作要求",
+            "relation": "control"
+          },
+          {
+            "from": "sa",
+            "to": "kapi",
+            "label": "Pod の API 要求",
+            "relation": "control"
+          },
+          {
+            "from": "role",
+            "to": "kapi",
+            "label": "認可条件",
+            "relation": "configuration"
+          },
+          {
+            "from": "web-pod",
+            "to": "api-service",
+            "label": "HTTP",
+            "relation": "traffic"
+          },
+          {
+            "from": "api-service",
+            "to": "api-pod",
+            "label": "HTTP",
+            "relation": "traffic"
+          },
+          {
+            "from": "policy",
+            "to": "api-pod",
+            "label": "許可・拒否の設定",
+            "relation": "configuration"
+          }
+        ],
+        "groups": [
+          {
+            "id": "host",
+            "label": "ホスト上のブラウザー",
+            "kind": "external"
+          },
+          {
+            "id": "cluster",
+            "label": "Kubernetes クラスター",
+            "kind": "cluster"
+          },
+          {
+            "id": "namespace",
+            "label": "Namespace: workboard（論理スコープ）",
+            "kind": "namespace",
+            "parentId": "cluster"
+          },
+          {
+            "id": "management",
+            "label": "API に保存される宣言・管理オブジェクト",
+            "kind": "management",
+            "parentId": "namespace"
+          },
+          {
+            "id": "runtime",
+            "label": "単一 Node / control-plane 兼 worker",
+            "kind": "node",
+            "parentId": "cluster"
+          }
+        ],
+        "views": [
+          {
+            "id": "authorization",
+            "title": "操作する権限",
+            "description": "予習。RBAC は API に何を要求できるかを決めます。ServiceAccount はコンテナではありません。",
+            "nodeIds": [
+              "user",
+              "sa",
+              "role",
+              "kapi"
+            ],
+            "relations": [
+              "configuration",
+              "control"
+            ]
+          },
+          {
+            "id": "network",
+            "title": "アプリの通信",
+            "description": "実線が HTTP。NetworkPolicy 自体が通信を中継するのではなく、対応 CNI がルールを適用します。",
+            "nodeIds": [
+              "web-pod",
+              "api-service",
+              "api-pod",
+              "policy"
+            ],
+            "relations": [
+              "traffic",
+              "configuration"
+            ]
+          }
+        ]
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "K8s Secret のセキュリティ境界は？",
+          "rubric": [
+            "Secretはbase64だけで秘密を保護できないと説明する",
+            "APIアクセス権限・保存時の保護・配布先を含めて考える"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "誰が Kubernetes API を操作できるべきか？",
+          "rubric": [
+            "人とワークロードを区別し最小権限を考える",
+            "操作の対象・範囲・監査の観点を説明する"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "k9s のような TUI を使っても、操作できる範囲は何で決まるのか（RBAC との関係）？",
+          "rubric": [
+            "k9sはkubeconfigの資格情報でKubernetes APIを呼ぶクライアントであると説明する",
+            "操作できる範囲はツールではなくRBACで決まり、TUIでも誤削除のリスクは同じと説明する"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "理解した概念"
+        },
+        {
+          "id": "m2",
+          "label": "想定する構成と採用理由"
+        },
+        {
+          "id": "m3",
+          "label": "必要な実験と期待結果"
+        },
+        {
+          "id": "m4",
+          "label": "疑問・未解決事項"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "slug": "eks",
+      "title": "AWS上の責任を分ける",
+      "subtitle": "予習 / VPC・EKS・Node・Terraform",
+      "level": "cloud",
+      "implemented": false,
+      "estimatedMinutes": 40,
+      "summary": "マネージドサービスでも残る責任と、費用・公開範囲を設計します。",
+      "goals": [
+        "AWS と Kubernetes の責任分界、VPC、subnet、route/NAT、EKS、Managed Node Groups、IAM、ECR、Terraform。",
+        "実装前に設計条件と検証方法を説明できる"
+      ],
+      "concepts": [
+        {
+          "term": "EKS",
+          "description": "AWS管理のKubernetes Control Planeを利用するサービスです。",
+          "analogy": "建物管理を任せても利用者の仕事は残る職場"
+        },
+        {
+          "term": "Managed Node Group",
+          "description": "EC2ノード群の管理を支援します。利用者には構成や更新の判断が残ります。",
+          "analogy": "設備の交換を支援する管理契約"
+        },
+        {
+          "term": "Terraform",
+          "description": "インフラの望む構成と差分をコードで扱います。",
+          "analogy": "建設図面と工事前の差分表"
+        }
+      ],
+      "sections": [
+        {
+          "id": "preview",
+          "title": "この章は予習です",
+          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
+        },
+        {
+          "id": "responsibility",
+          "title": "まず標準EKSで境界を見る",
+          "body": "設計書は最初に標準EKSとManaged Node Groupsを使い、Control Plane・Node・アドオン・アプリの担当範囲を観察する方針です。Auto Modeは後で管理主体や費用を比較する課題です。\n\nAWSに任せる部分と、自分で監視・更新・設定する部分を表にしてみましょう。"
+        },
+        {
+          "id": "cost",
+          "title": "構築より前に決める条件",
+          "body": "region、AZ、Node、NAT、endpointのアクセス範囲、利用時間、削除後に残る資産を整理します。EKS料金だけでなくEC2・ALB・RDS・NAT等も見積もる必要があります。\n\n開始条件は利用の明示承認、見積もり確認、予算通知、クリーンアップ手順のレビューです。予算通知は課金停止の保証ではありません。",
+          "callout": "この章には実行コマンドを掲載していません。まだTerraform構成もAWSリソースも作成していません。"
+        }
+      ],
+      "diagram": {
+        "type": "eks",
+        "title": "AWS 管理と利用者の責任",
+        "caption": "Phase 6 の将来案。標準 EKS の Control Plane は AWS が運用します。Managed Node Group でも Node/AMI 更新方針・アドオン・アプリ設定は利用者の責任として残ります。枠は実行配置と責任の説明で、VPC が Control Plane 全体を包含するという意味ではありません。",
+        "nodes": [
+          {
+            "id": "tf",
+            "label": "Terraform",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "利用者が構成と差分を管理",
+            "column": 0,
+            "group": "outside"
+          },
+          {
+            "id": "vpc",
+            "label": "VPC / subnet",
+            "resource": "aws.vpc",
+            "kind": "vpc",
+            "sublabel": "利用者が経路・アクセス範囲を設計",
+            "column": 0,
+            "group": "aws"
+          },
+          {
+            "id": "eks",
+            "label": "EKS Control Plane",
+            "resource": "aws.eks",
+            "kind": "eks",
+            "sublabel": "AWS が運用・利用者がアクセス設定",
+            "column": 1,
+            "group": "managed-control"
+          },
+          {
+            "id": "ecr",
+            "label": "ECR",
+            "resource": "aws.ecr",
+            "kind": "ecr",
+            "sublabel": "クラスター外のイメージ保管",
+            "column": 2,
+            "group": "aws"
+          },
+          {
+            "id": "web-pod",
+            "label": "Web Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 0,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "web",
+                "technology": "Nginx",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "api-pod",
+            "label": "API Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 1,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "api",
+                "technology": "FastAPI",
+                "resource": "container"
+              }
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "from": "tf",
+            "to": "vpc",
+            "label": "構成を定義",
+            "relation": "configuration"
+          },
+          {
+            "from": "tf",
+            "to": "eks",
+            "label": "構成を定義",
+            "relation": "configuration"
+          },
+          {
+            "from": "eks",
+            "to": "web-pod",
+            "label": "配置・状態の調整",
+            "relation": "control"
+          },
+          {
+            "from": "eks",
+            "to": "api-pod",
+            "label": "配置・状態の調整",
+            "relation": "control"
+          },
+          {
+            "from": "ecr",
+            "to": "web-pod",
+            "label": "イメージを配布",
+            "relation": "configuration"
+          },
+          {
+            "from": "ecr",
+            "to": "api-pod",
+            "label": "イメージを配布",
+            "relation": "configuration"
+          }
+        ],
+        "groups": [
+          {
+            "id": "outside",
+            "label": "構成を定義する利用者",
+            "kind": "external"
+          },
+          {
+            "id": "aws",
+            "label": "AWS 環境 / 責任の分担",
+            "kind": "aws"
+          },
+          {
+            "id": "cluster",
+            "label": "EKS / Kubernetes クラスター",
+            "kind": "cluster",
+            "parentId": "aws"
+          },
+          {
+            "id": "managed-control",
+            "label": "AWS が運用する Control Plane",
+            "kind": "aws",
+            "parentId": "cluster"
+          },
+          {
+            "id": "runtime",
+            "label": "Managed Node Group / EC2 上の Node",
+            "kind": "node",
+            "parentId": "cluster"
+          }
+        ],
+        "views": [
+          {
+            "id": "overview",
+            "title": "全体像",
+            "description": "Phase 6 の将来案。標準 EKS の Control Plane は AWS が運用します。Managed Node Group でも Node/AMI 更新方針・アドオン・アプリ設定は利用者の責任として残ります。枠は実行配置と責任の説明で、VPC が Control Plane 全体を包含するという意味ではありません。",
+            "nodeIds": [
+              "tf",
+              "vpc",
+              "eks",
+              "ecr",
+              "web-pod",
+              "api-pod"
+            ],
+            "relations": [
+              "configuration",
+              "control"
+            ]
+          }
+        ]
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "EKS でも OS/Node の運用責任は残るか？",
+          "rubric": [
+            "AWS管理のControl Planeと利用者側の責任を区別する",
+            "ノード・アドオン・アプリの更新や設定責任を挙げる"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "マネージド Node Group と Auto Mode の管理境界の差は？",
+          "rubric": [
+            "管理主体と観察可能な範囲を比較する",
+            "費用・制約・学習目的を判断条件に含める"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "理解した概念"
+        },
+        {
+          "id": "m2",
+          "label": "想定する構成と採用理由"
+        },
+        {
+          "id": "m3",
+          "label": "必要な実験と期待結果"
+        },
+        {
+          "id": "m4",
+          "label": "疑問・未解決事項"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "slug": "integration",
+      "title": "AWSサービスをつなぐ",
+      "subtitle": "予習 / ALB・RDS・Pod Identity",
+      "level": "cloud",
+      "implemented": false,
+      "estimatedMinutes": 35,
+      "summary": "入口・データ・権限をマネージドサービスとどう分担するか考えます。",
+      "goals": [
+        "ALB / Ingress、AWS Load Balancer Controller、RDS、Pod Identity、IAM least privilege、ネットワーク設計、Helm（chart の利用者として）。",
+        "実装前に設計条件と検証方法を説明できる"
+      ],
+      "concepts": [
+        {
+          "term": "ALB / Controller",
+          "description": "Ingressの定義をControllerが処理してALBを管理します。",
+          "analogy": "受付方針と、それを設備へ反映する管理者"
+        },
+        {
+          "term": "RDS",
+          "description": "DBの運用機能をAWSへ任せる選択肢です。接続やデータ保護の設計は必要です。",
+          "analogy": "保管業務を専門業者と分担する倉庫"
+        },
+        {
+          "term": "Pod Identity",
+          "description": "PodからAWSを呼ぶ際に、限定したIAM権限を渡す仕組みです。",
+          "analogy": "用途を絞った作業用の許可証"
+        }
+      ],
+      "sections": [
+        {
+          "id": "preview",
+          "title": "この章は予習です",
+          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
+        },
+        {
+          "id": "path",
+          "title": "入口とDBをクラスターの外へ",
+          "body": "ALB→Web→API→RDSという経路を設計します。ALBのIngressを扱うAWS Load Balancer Controllerと、IngressというAPIリソースは別です。\n\nRDSはDB運用を分担できますが、費用・AWS依存・ネットワーク接続・移行・復旧の検討が増えます。バックアップの取得だけでなく復元方法まで比較します。"
+        },
+        {
+          "id": "identity",
+          "title": "公開と権限を限定する",
+          "body": "認証のないWorkBoardを恒常的にインターネットへ公開しない方針です。短時間の検証でも公開範囲・セキュリティグループ・後片付けを先に決めます。\n\nCSVをS3に置く発展課題では、Pod Identityで必要な操作だけを許可する計画です。S3やWorkerは任意の発展課題で、MVPの必須構成ではありません。"
+        }
+      ],
+      "diagram": {
+        "type": "integration",
+        "title": "Kubernetes と AWS サービスの連携",
+        "caption": "Phase 7 の予習。RDS/ALB/IAM は Kubernetes Pod ではありません。IAM 図は Controller の AWS API 操作権限で、アプリの RDS SQL 認証とは別です。",
+        "nodes": [
+          {
+            "id": "browser",
+            "label": "ブラウザー",
+            "resource": "browser",
+            "kind": "browser",
+            "sublabel": "制限した検証アクセス",
+            "column": 0,
+            "group": "host"
+          },
+          {
+            "id": "alb",
+            "label": "ALB",
+            "resource": "aws.alb",
+            "kind": "alb",
+            "sublabel": "クラスター外の HTTP 入口",
+            "column": 0,
+            "group": "aws"
+          },
+          {
+            "id": "rds",
+            "label": "RDS PostgreSQL",
+            "resource": "aws.rds",
+            "kind": "rds",
+            "sublabel": "クラスター外の DB",
+            "column": 2,
+            "group": "aws"
+          },
+          {
+            "id": "iam",
+            "label": "IAM role",
+            "resource": "aws.iam",
+            "kind": "iam",
+            "sublabel": "Controller の ALB 管理権限",
+            "column": 3,
+            "group": "aws"
+          },
+          {
+            "id": "ingress",
+            "label": "Ingress 定義",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "Kubernetes API に保存する入口の宣言",
+            "column": 0,
+            "group": "management"
+          },
+          {
+            "id": "web-service",
+            "label": "Web Service",
+            "resource": "kubernetes.service",
+            "kind": "service",
+            "sublabel": "ターゲットを選ぶ backend 定義",
+            "column": 0,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "api-service",
+            "label": "API Service",
+            "resource": "kubernetes.service",
+            "kind": "service",
+            "sublabel": "内部 HTTP 接続先",
+            "column": 1,
+            "group": "namespace",
+            "namespace": "workboard"
+          },
+          {
+            "id": "web-pod",
+            "label": "Web Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 0,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "web",
+                "technology": "Nginx",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "api-pod",
+            "label": "API Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 1,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "api",
+                "technology": "FastAPI",
+                "resource": "container"
+              }
+            ]
+          },
+          {
+            "id": "lbc-pod",
+            "label": "Controller Pod",
+            "resource": "kubernetes.pod",
+            "kind": "pod",
+            "sublabel": "コンテナを実行する単位",
+            "column": 3,
+            "group": "runtime",
+            "namespace": "workboard",
+            "contains": [
+              {
+                "label": "lbc",
+                "technology": "AWS Load Balancer Controller",
+                "resource": "container"
+              }
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "from": "browser",
+            "to": "alb",
+            "label": "HTTP / 制限付き",
+            "relation": "traffic"
+          },
+          {
+            "from": "alb",
+            "to": "web-pod",
+            "label": "HTTP / IP ターゲット案",
+            "relation": "traffic"
+          },
+          {
+            "from": "web-pod",
+            "to": "api-service",
+            "label": "/api/ HTTP",
+            "relation": "traffic"
+          },
+          {
+            "from": "api-service",
+            "to": "api-pod",
+            "label": "HTTP",
+            "relation": "traffic"
+          },
+          {
+            "from": "api-pod",
+            "to": "rds",
+            "label": "SQL",
+            "relation": "traffic"
+          },
+          {
+            "from": "web-service",
+            "to": "web-pod",
+            "label": "selector",
+            "relation": "configuration"
+          },
+          {
+            "from": "ingress",
+            "to": "web-service",
+            "label": "backend を宣言",
+            "relation": "configuration"
+          },
+          {
+            "from": "ingress",
+            "to": "lbc-pod",
+            "label": "監視する定義",
+            "relation": "configuration"
+          },
+          {
+            "from": "lbc-pod",
+            "to": "alb",
+            "label": "作成・更新を要求",
+            "relation": "control"
+          },
+          {
+            "from": "iam",
+            "to": "lbc-pod",
+            "label": "AWS API 権限",
+            "relation": "configuration"
+          }
+        ],
+        "groups": [
+          {
+            "id": "host",
+            "label": "ホスト上のブラウザー",
+            "kind": "external"
+          },
+          {
+            "id": "aws",
+            "label": "AWS マネージドサービス",
+            "kind": "aws"
+          },
+          {
+            "id": "cluster",
+            "label": "Kubernetes クラスター",
+            "kind": "cluster",
+            "parentId": "aws"
+          },
+          {
+            "id": "namespace",
+            "label": "Namespace: workboard（論理スコープ）",
+            "kind": "namespace",
+            "parentId": "cluster"
+          },
+          {
+            "id": "management",
+            "label": "API に保存される宣言・管理オブジェクト",
+            "kind": "management",
+            "parentId": "namespace"
+          },
+          {
+            "id": "runtime",
+            "label": "EKS の Node / 利用者のワークロード",
+            "kind": "node",
+            "parentId": "cluster"
+          }
+        ],
+        "views": [
+          {
+            "id": "traffic",
+            "title": "HTTP と SQL の経路",
+            "description": "将来の IP ターゲット案を例示。ALB は選ばれた Web Pod へ転送します。Service はターゲット選択の論理設定で、Controller はリクエストを中継しません。実装時に方式を確定します。",
+            "nodeIds": [
+              "browser",
+              "alb",
+              "web-service",
+              "web-pod",
+              "api-service",
+              "api-pod",
+              "rds"
+            ],
+            "relations": [
+              "traffic",
+              "configuration"
+            ]
+          },
+          {
+            "id": "control",
+            "title": "ALB を管理する関係",
+            "description": "Ingress は宣言、Controller Pod は実行中のプログラム、ALB は AWS の別サービスです。Controller はクラスター外の ALB を管理できるため、実行場所と管理対象の境界は一致しません。",
+            "nodeIds": [
+              "ingress",
+              "web-service",
+              "lbc-pod",
+              "alb",
+              "iam"
+            ],
+            "relations": [
+              "control",
+              "configuration"
+            ]
+          }
+        ]
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "なぜ PostgreSQL を RDS に置くのか？",
+          "rubric": [
+            "DB運用責任・バックアップ・障害対応の分離を説明する",
+            "費用・AWS依存・接続設計とのトレードオフを挙げる"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "RDS の障害が API の Readiness にどう影響するか？",
+          "rubric": [
+            "DB接続失敗によりreadyが503になり得ると説明する",
+            "liveはDB非依存でありスキーマの正常性は別確認と説明する"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "第三者の Helm chart を導入するとき、何を確認すれば中身を把握したと言えるか？",
+          "rubric": [
+            "chartのバージョンとvaluesを固定し、helm templateで生成されるリソースを確認すると説明する",
+            "RBAC・Webhook・CRDなど権限や影響範囲の大きいリソースと、配布元の信頼性を確認する"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "理解した概念"
+        },
+        {
+          "id": "m2",
+          "label": "想定する構成と採用理由"
+        },
+        {
+          "id": "m3",
+          "label": "必要な実験と期待結果"
+        },
+        {
+          "id": "m4",
+          "label": "疑問・未解決事項"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "slug": "pipeline",
+      "title": "変更と運用をつなぐ",
+      "subtitle": "予習 / CI・CD・GitOps・SLI",
+      "level": "review",
+      "implemented": false,
+      "estimatedMinutes": 35,
+      "summary": "変更を安全に届け、観察し、戻すまでを一つの流れで考えます。",
+      "goals": [
+        "GitHub Actions、CI/CD、デプロイ戦略、GitOps、ログ・メトリクス・トレース、SLO、コスト最適化。",
+        "実装前に設計条件と検証方法を説明できる"
+      ],
+      "concepts": [
+        {
+          "term": "CI / CD",
+          "description": "変更の検査と、環境への反映を分けて設計します。",
+          "analogy": "出荷検査と配送の工程"
+        },
+        {
+          "term": "GitOps",
+          "description": "Gitの定義と実環境の差を継続的に調整する運用方式です。",
+          "analogy": "正本の台帳と現物を定期照合する係"
+        },
+        {
+          "term": "SLI / SLO",
+          "description": "利用者視点の指標と、その目標値を分けて定義します。",
+          "analogy": "測った所要時間と約束する所要時間"
+        }
+      ],
+      "sections": [
+        {
+          "id": "preview",
+          "title": "この章は予習です",
+          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
+        },
+        {
+          "id": "delivery",
+          "title": "テスト・反映・復旧を切り分ける",
+          "body": "CIでlint・APIテスト・イメージビルド・構文確認を行い、CDは最初に手動承認制とする計画です。GitOpsは対象数や運用能力を踏まえて方式比較後に追加します。\n\n失敗した変更をどこで止めるか、認証情報をどこへ渡すか、どの版へ戻すかも設計対象です。"
+        },
+        {
+          "id": "observe",
+          "title": "測った事実で改善する",
+          "body": "応答時間、HTTPエラー率、再起動、資源使用量を観察します。成功率やp95応答時間をSLIとし、期間と母数を含めて目標を決めます。\n\n測定前のSLO達成宣言や、予算通知だけで費用が止まるという判断は避けます。運用・復旧・コストを同じ改善サイクルへ戻します。"
+        }
+      ],
+      "diagram": {
+        "type": "pipeline",
+        "title": "変更から次の改善へ",
+        "caption": "Phase 8 の予習。これは工程と情報の流れで、箱がすべて Kubernetes リソースやコンテナという意味ではありません。",
+        "nodes": [
+          {
+            "id": "git",
+            "label": "Git の変更",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "構成の正本",
+            "column": 0
+          },
+          {
+            "id": "ci",
+            "label": "CI",
+            "resource": "pipeline",
+            "kind": "pipeline",
+            "sublabel": "テスト・ビルド",
+            "column": 1
+          },
+          {
+            "id": "approve",
+            "label": "承認",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "反映するかの判断",
+            "column": 2
+          },
+          {
+            "id": "cd",
+            "label": "CD / GitOps",
+            "resource": "pipeline",
+            "kind": "pipeline",
+            "sublabel": "方式を比較して選ぶ",
+            "column": 3
+          },
+          {
+            "id": "app",
+            "label": "対象環境",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "構成と実状態の照合先",
+            "column": 4
+          },
+          {
+            "id": "observe",
+            "label": "ログ・指標",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "SLI と復旧判断",
+            "column": 5
+          }
+        ],
+        "edges": [
+          {
+            "from": "git",
+            "to": "ci",
+            "label": "検査",
+            "relation": "configuration"
+          },
+          {
+            "from": "ci",
+            "to": "approve",
+            "label": "結果",
+            "relation": "configuration"
+          },
+          {
+            "from": "approve",
+            "to": "cd",
+            "label": "反映を許可",
+            "relation": "control"
+          },
+          {
+            "from": "cd",
+            "to": "app",
+            "label": "更新",
+            "relation": "control"
+          },
+          {
+            "from": "app",
+            "to": "observe",
+            "label": "計測結果",
+            "relation": "configuration"
+          },
+          {
+            "from": "observe",
+            "to": "git",
+            "label": "改善",
+            "relation": "configuration"
+          }
+        ],
+        "groups": [],
+        "views": [
+          {
+            "id": "overview",
+            "title": "全体像",
+            "description": "Phase 8 の予習。これは工程と情報の流れで、箱がすべて Kubernetes リソースやコンテナという意味ではありません。",
+            "nodeIds": [
+              "git",
+              "ci",
+              "approve",
+              "cd",
+              "app",
+              "observe"
+            ],
+            "relations": [
+              "configuration",
+              "control"
+            ]
+          }
+        ]
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "GitOps と CI からの直接 `kubectl apply` の違いは？",
+          "rubric": [
+            "Gitを正本として継続的に差分を調整する方式とCIによる直接実行を区別する",
+            "権限・ドリフト・復旧方法を比較する"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "管理対象が増えたらどちらが有利か？",
+          "rubric": [
+            "対象数・チーム・運用能力という判断条件を挙げる",
+            "管理要素の追加コストも比較し一律に断定しない"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "Helm と Kustomize は、それぞれどんな変更・配布に向くか？",
+          "rubric": [
+            "Helmはパッケージ化・配布・release管理、Kustomizeは自分のYAMLの環境差分に向くと説明する",
+            "利用者・配布の有無・レビューのしやすさを判断条件に含める"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "両方を同じアプリに使うと何が複雑になるか？",
+          "rubric": [
+            "生成手順が二段になり、最終的なマニフェストの出所と差分を追いにくくなると説明する",
+            "併用する場合は役割の分担と生成結果の確認方法を決めると説明する"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "理解した概念"
+        },
+        {
+          "id": "m2",
+          "label": "想定する構成と採用理由"
+        },
+        {
+          "id": "m3",
+          "label": "必要な実験と期待結果"
+        },
+        {
+          "id": "m4",
+          "label": "疑問・未解決事項"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "slug": "comparison",
+      "title": "ECSとEKSを選び分ける",
+      "subtitle": "予習 / 要件から採用判断へ",
+      "level": "review",
+      "implemented": false,
+      "estimatedMinutes": 40,
+      "summary": "EKS採用を正解にせず、同じ要件と根拠で選択肢を比べます。",
+      "goals": [
+        "ECSとEKSを同じ要件で比較できる",
+        "採用理由・反対案・不確実性を根拠と共に残せる"
+      ],
+      "concepts": [
+        {
+          "term": "比較条件",
+          "description": "規模・チーム・可用性・移植性などをそろえて比較します。",
+          "analogy": "同じ荷物と距離で運送方法を選ぶ"
+        },
+        {
+          "term": "運用負荷",
+          "description": "導入後に更新・障害対応・監視を続けるための負担です。",
+          "analogy": "購入費とは別に必要な維持費と手間"
+        },
+        {
+          "term": "不確実性",
+          "description": "未測定・未確定の前提を明示し、追加調査へつなげます。",
+          "analogy": "見積もりの根拠と未確定欄"
+        }
+      ],
+      "sections": [
+        {
+          "id": "preview",
+          "title": "この章は予習です",
+          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
+        },
+        {
+          "id": "scenario",
+          "title": "同じサービス要件で比較する",
+          "body": "設計書の仮定は、月間数十万リクエスト規模の社内タスク管理を少人数で運用し、将来複数サービスが加わる可能性がある状況です。これはユーザーの実要件ではなく、比較のための課題シナリオです。\n\n初期構築、運用責任、スケール、可用性、セキュリティ、コスト、開発体験、長期戦略を比べます。"
+        },
+        {
+          "id": "decision",
+          "title": "採用案を反対案と一緒に書く",
+          "body": "採用案だけでなく、もう一方を選ばない理由と、その判断が変わる条件も残します。既存技術や組織の習熟度も要件の一部です。\n\n料金の定量比較はregion・時間・構成・調査日をそろえて公式情報を確認する必要があります。この予習教材では現行料金を断定していません。"
+        }
+      ],
+      "diagram": {
+        "type": "comparison",
+        "title": "要件から根拠ある選定へ",
+        "caption": "サービスの比較を表す概念図です。EKS の採用やクラスターの構築が完了したという意味ではありません。",
+        "nodes": [
+          {
+            "id": "requirements",
+            "label": "想定要件",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "規模・チーム・SLO",
+            "column": 0
+          },
+          {
+            "id": "ecs",
+            "label": "ECS 案",
+            "resource": "aws.ecs",
+            "kind": "ecs",
+            "sublabel": "構成と運用の選択肢",
+            "column": 1
+          },
+          {
+            "id": "eks",
+            "label": "EKS 案",
+            "resource": "aws.eks",
+            "kind": "eks",
+            "sublabel": "構成と運用の選択肢",
+            "column": 2
+          },
+          {
+            "id": "compare",
+            "label": "比較表",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "費用・責任・移植性",
+            "column": 3
+          },
+          {
+            "id": "adr",
+            "label": "採用 ADR",
+            "resource": "document",
+            "kind": "document",
+            "sublabel": "理由・反対案・不確実性",
+            "column": 4
+          }
+        ],
+        "edges": [
+          {
+            "from": "requirements",
+            "to": "ecs",
+            "label": "同じ要件",
+            "relation": "configuration"
+          },
+          {
+            "from": "requirements",
+            "to": "eks",
+            "label": "同じ要件",
+            "relation": "configuration"
+          },
+          {
+            "from": "ecs",
+            "to": "compare",
+            "label": "根拠",
+            "relation": "configuration"
+          },
+          {
+            "from": "eks",
+            "to": "compare",
+            "label": "根拠",
+            "relation": "configuration"
+          },
+          {
+            "from": "compare",
+            "to": "adr",
+            "label": "判断",
+            "relation": "configuration"
+          }
+        ],
+        "groups": [],
+        "views": [
+          {
+            "id": "overview",
+            "title": "全体像",
+            "description": "サービスの比較を表す概念図です。EKS の採用やクラスターの構築が完了したという意味ではありません。",
+            "nodeIds": [
+              "requirements",
+              "ecs",
+              "eks",
+              "compare",
+              "adr"
+            ],
+            "relations": [
+              "configuration"
+            ]
+          }
+        ]
+      },
+      "questions": [
+        {
+          "id": "q1",
+          "prompt": "初期構築: どちらが要件実現までの構成要素が少ないか",
+          "rubric": [
+            "ECSとEKSを同じ条件で比較する",
+            "初期構築について構成・運用の違いを根拠と共に説明する",
+            "前提と不確実性を明示しEKSを無条件の正解としない"
+          ]
+        },
+        {
+          "id": "q2",
+          "prompt": "運用責任: ノード、パッチ、ネットワーク、アドオンの管理責務はどちらにあるか",
+          "rubric": [
+            "ECSとEKSを同じ条件で比較する",
+            "運用責任について構成・運用の違いを根拠と共に説明する",
+            "前提と不確実性を明示しEKSを無条件の正解としない"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "スケール: Pod/Task と Node/Capacity の独立性、負荷への追従はどう違うか",
+          "rubric": [
+            "ECSとEKSを同じ条件で比較する",
+            "スケールについて構成・運用の違いを根拠と共に説明する",
+            "前提と不確実性を明示しEKSを無条件の正解としない"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "可用性: ノード / AZ / DB 障害にどの設計で対応するか",
+          "rubric": [
+            "ECSとEKSを同じ条件で比較する",
+            "可用性について構成・運用の違いを根拠と共に説明する",
+            "前提と不確実性を明示しEKSを無条件の正解としない"
+          ]
+        },
+        {
+          "id": "q5",
+          "prompt": "セキュリティ: IAM、ネットワーク、コンテナ権限、監査で何が必要か",
+          "rubric": [
+            "ECSとEKSを同じ条件で比較する",
+            "セキュリティについて構成・運用の違いを根拠と共に説明する",
+            "前提と不確実性を明示しEKSを無条件の正解としない"
+          ]
+        },
+        {
+          "id": "q6",
+          "prompt": "コスト: 常時費用、変動費、運用人件費、移行費用の差は何か",
+          "rubric": [
+            "ECSとEKSを同じ条件で比較する",
+            "コストについて構成・運用の違いを根拠と共に説明する",
+            "前提と不確実性を明示しEKSを無条件の正解としない"
+          ]
+        },
+        {
+          "id": "q7",
+          "prompt": "開発体験: GitOps、共通基盤、エコシステム、組織の学習負荷はどう違うか",
+          "rubric": [
+            "ECSとEKSを同じ条件で比較する",
+            "開発体験について構成・運用の違いを根拠と共に説明する",
+            "前提と不確実性を明示しEKSを無条件の正解としない"
+          ]
+        },
+        {
+          "id": "q8",
+          "prompt": "長期戦略: 既存技術、移植性、マルチクラスタ要件が判断に影響するか",
+          "rubric": [
+            "ECSとEKSを同じ条件で比較する",
+            "長期戦略について構成・運用の違いを根拠と共に説明する",
+            "前提と不確実性を明示しEKSを無条件の正解としない"
+          ]
+        }
+      ],
+      "memoFields": [
+        {
+          "id": "m1",
+          "label": "想定要件"
+        },
+        {
+          "id": "m2",
+          "label": "比較結果と根拠"
+        },
+        {
+          "id": "m3",
+          "label": "採用案・反対案"
+        },
+        {
+          "id": "m4",
+          "label": "不確実性と追加調査"
+        }
+      ],
+      "sources": [
+        {
+          "label": "一次設計書",
+          "path": "docs/kubernetes-eks-hands-on-design.md"
+        }
+      ]
+    }
+  ]
+}

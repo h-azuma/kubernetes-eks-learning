@@ -1,0 +1,48 @@
+﻿{
+    "source":  "https://d1.awsstatic.com/onedam/marketing-channels/website/public/shared/architecture-icon-release/Icon-package_07312026.5846e92413caa21490223536cc97f1269e44fa92.zip",
+    "guide":  "https://aws.amazon.com/architecture/icons/",
+    "release":  "07312026",
+    "archiveSha256":  "d2d166c453526471749d520e0db022c459abef759d2946cf2dd1d1c992dc6526",
+    "icons":  [
+                  {
+                      "file":  "eks.svg",
+                      "archivePath":  "Architecture-Service-Icons_07312026/Arch_Containers/48/Arch_Amazon-Elastic-Kubernetes-Service_48.svg",
+                      "sha256":  "83125d0b8a7920b7a13381a8645aacb4efa5ea7a0af3049949e4530491b46ca8"
+                  },
+                  {
+                      "file":  "ecs.svg",
+                      "archivePath":  "Architecture-Service-Icons_07312026/Arch_Containers/48/Arch_Amazon-Elastic-Container-Service_48.svg",
+                      "sha256":  "7f8b2883cd6171a42bdcafab2d20d17c3cf886d306c62846c6c555ad26463b04"
+                  },
+                  {
+                      "file":  "ecr.svg",
+                      "archivePath":  "Architecture-Service-Icons_07312026/Arch_Containers/48/Arch_Amazon-Elastic-Container-Registry_48.svg",
+                      "sha256":  "bf829eab882165f4fb850bab032e5c81312cb579e2ad880372f206936db4a2be"
+                  },
+                  {
+                      "file":  "rds.svg",
+                      "archivePath":  "Architecture-Service-Icons_07312026/Arch_Databases/48/Arch_Amazon-RDS_48.svg",
+                      "sha256":  "5ef651fae418df2ceade6bf9cbf779d8c8f2ec35c6ff47b23934b10722b6790e"
+                  },
+                  {
+                      "file":  "ec2.svg",
+                      "archivePath":  "Architecture-Service-Icons_07312026/Arch_Compute/48/Arch_Amazon-EC2_48.svg",
+                      "sha256":  "099dff32b3f795f3fa8ed97f0466708502a7fd6500136679899a0cec5a5a2473"
+                  },
+                  {
+                      "file":  "iam.svg",
+                      "archivePath":  "Architecture-Service-Icons_07312026/Arch_Security-Identity/48/Arch_AWS-Identity-and-Access-Management_48.svg",
+                      "sha256":  "81954dcfb86d5f410f7084345e459cd5c7ca1d76032d34f771ad379c94e062b6"
+                  },
+                  {
+                      "file":  "vpc.svg",
+                      "archivePath":  "Architecture-Service-Icons_07312026/Arch_Networking-Content-Delivery/48/Arch_Amazon-Virtual-Private-Cloud_48.svg",
+                      "sha256":  "7b842e6a64b2238b159d2470e9dc2389f0d1d373a2236abe20aed971b1f69ded"
+                  },
+                  {
+                      "file":  "alb.svg",
+                      "archivePath":  "Resource-Icons_07312026/Res_Networking-Content-Delivery/Res_Elastic-Load-Balancing_Application-Load-Balancer_48.svg",
+                      "sha256":  "27bea44fffd83cc42ce68411e659761a114d41d6b89efc556afef969f96414aa"
+                  }
+              ]
+}

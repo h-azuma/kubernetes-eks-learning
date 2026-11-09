@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workboard-api
+  namespace: workboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workboard-api
+  template:
+    metadata:
+      labels:
+        app: workboard-api
+    spec:
+      containers:
+        - name: api
+          image: workboard-api:kind
+          imagePullPolicy: Never
+          env:
+            - name: POSTGRES_HOST
+              value: workboard-postgres
+            - name: POSTGRES_USER
+              value: workboard
+            - name: POSTGRES_PASSWORD
+              value: kind-only-dummy
+            - name: POSTGRES_DB
+              value: workboard
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workboard-api
+  namespace: workboard
+spec:
+  type: ClusterIP
+  selector:
+    app: workboard-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workboard-web
+  namespace: workboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workboard-web
+  template:
+    metadata:
+      labels:
+        app: workboard-web
+    spec:
+      containers:
+        - name: web
+          image: workboard-web:kind
+          imagePullPolicy: Never
+          env:
+            - name: API_HOST
+              value: workboard-api.workboard.svc.cluster.local
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workboard-web
+  namespace: workboard
+spec:
+  type: ClusterIP
+  selector:
+    app: workboard-web
+  ports:
+    - port: 80
+      targetPort: 80

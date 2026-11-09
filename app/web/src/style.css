@@ -1,0 +1,14 @@
+:root { font-family: system-ui, sans-serif; color: #203044; background: #f4f6f8; }
+body { margin: 0; }
+main { max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+section { background: white; border: 1px solid #d9e0e7; border-radius: 8px; padding: 1.2rem; margin: 1rem 0; }
+h1, h2, h3 { margin-top: 0; }
+label { display: block; margin: 0.8rem 0; }
+input, textarea, select { display: block; box-sizing: border-box; width: 100%; margin-top: 0.3rem; padding: 0.6rem; border: 1px solid #9daabb; border-radius: 4px; font: inherit; }
+button { padding: 0.55rem 0.9rem; border: 1px solid #275cb0; border-radius: 4px; background: #275cb0; color: white; cursor: pointer; font: inherit; }
+button:disabled { opacity: 0.55; cursor: wait; }
+.actions { display: flex; gap: 0.5rem; }
+ul { padding: 0; list-style: none; }
+li { border-top: 1px solid #d9e0e7; padding: 1rem 0; overflow-wrap: anywhere; }
+li p { white-space: pre-wrap; }
+#message { min-height: 1.5em; }

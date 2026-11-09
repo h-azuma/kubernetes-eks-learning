@@ -1,0 +1,102 @@
+﻿[
+    {
+        "file":  "pod.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/pod.svg",
+        "sha256":  "3356f7ca970f811da2b1aa34a0f13e846255378727809ab6629837a842db0a2d"
+    },
+    {
+        "file":  "deployment.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/deploy.svg",
+        "sha256":  "d96f6e93a0f57ca9583b2120e3ddb4453afb5a29aa6d8c1360e8eb8e458489f7"
+    },
+    {
+        "file":  "replicaset.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/rs.svg",
+        "sha256":  "234adcccb525efccc79dd996bdc18d73b5ac57c74beb8ee8549726f6b2beb5a7"
+    },
+    {
+        "file":  "service.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/svc.svg",
+        "sha256":  "a86fad881253c4d7abbe7413c0efbca2e7dde7e54a55774f79349494bd823990"
+    },
+    {
+        "file":  "job.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/job.svg",
+        "sha256":  "1f0f273f4271b2a5b22c1422d82187579f548619c8c030f9e2226bccfb3ce67f"
+    },
+    {
+        "file":  "statefulset.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/sts.svg",
+        "sha256":  "a35e5fafa0d5d642eeb5edbe4692716e95a763188ef16d0ec1476b7e082ece27"
+    },
+    {
+        "file":  "pvc.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/pvc.svg",
+        "sha256":  "1be3839623947b0c6d3283538f213c2793398c720dc8f739436371e96462bb26"
+    },
+    {
+        "file":  "pv.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/pv.svg",
+        "sha256":  "93d6ccca227c8631eaac916fc37911d5c16e07607cbd4bfb8825e2972c22ad66"
+    },
+    {
+        "file":  "configmap.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/cm.svg",
+        "sha256":  "79cd881b717aed580d90a83f4c67c7f2c2b5672a26669ef61d0ddd2da6aac2af"
+    },
+    {
+        "file":  "secret.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/secret.svg",
+        "sha256":  "144fb9972d456ef172fcebbe6a6d7d4921254c6586b0381962c9add0b34468c2"
+    },
+    {
+        "file":  "hpa.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/hpa.svg",
+        "sha256":  "7b92a11ab6050825927bc91bf654499a02e8f8488b059d2578ab22037900fbed"
+    },
+    {
+        "file":  "networkpolicy.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/netpol.svg",
+        "sha256":  "99ec4a960470a6cc38cb78eb571d8f6f39f41622d03e1fc85dadd4a6608e9d3d"
+    },
+    {
+        "file":  "serviceaccount.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/sa.svg",
+        "sha256":  "fd113e685c6842c074f8916cdd2424241fcaa64dabddce82f9ad60f9b1d93285"
+    },
+    {
+        "file":  "namespace.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/ns.svg",
+        "sha256":  "6539e288ca6f5ce9c88aedf8520301618d0b1e0115783483104096b0c5a8ad19"
+    },
+    {
+        "file":  "volume.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/vol.svg",
+        "sha256":  "07624349d456d064e411b3a3710370be6487568808b72e2dfc97ca5c78f5d020"
+    },
+    {
+        "file":  "role.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/role.svg",
+        "sha256":  "4b3c4407e2ffe7fac8599aea02e0f45c720ba81a6891c37f1678ba89c75048e6"
+    },
+    {
+        "file":  "clusterrole.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/resources/unlabeled/c-role.svg",
+        "sha256":  "d3c575d16b61b1ec9f4d7c5a053d23a8e259798dc479a3783b7d2af1709c0a8f"
+    },
+    {
+        "file":  "node.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/infrastructure_components/unlabeled/node.svg",
+        "sha256":  "a99367b8a805d9bbc91ef82cf47c8a243fe4e6dd8ff2ce4342f597c2cbec965a"
+    },
+    {
+        "file":  "controlplane.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/infrastructure_components/unlabeled/control-plane.svg",
+        "sha256":  "781a768bc7c6f6fcf796e9bebc10692fbabcf3f680945191e6cedc5819ac03e2"
+    },
+    {
+        "file":  "api.svg",
+        "source":  "https://raw.githubusercontent.com/kubernetes/community/70a4bb2d8cc35bb0672f221bad9bc60c27a6f94b/icons/svg/control_plane_components/labeled/api.svg",
+        "sha256":  "da177da264ed0d77e824c0a442cfb19d89bdaa37e40bf9125ef2f6cf26c2ca36"
+    }
+]

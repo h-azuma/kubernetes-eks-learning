@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workboard-postgres
+  namespace: workboard
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: workboard-postgres
+  template:
+    metadata:
+      labels:
+        app: workboard-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17.11-bookworm
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: workboard
+            - name: POSTGRES_PASSWORD
+              value: kind-only-dummy
+            - name: POSTGRES_DB
+              value: workboard
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, workboard, -d, workboard]
+            periodSeconds: 2
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workboard-postgres
+  namespace: workboard
+spec:
+  type: ClusterIP
+  selector:
+    app: workboard-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
