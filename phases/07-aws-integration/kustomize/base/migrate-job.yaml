@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: workboard-migrate
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-db
+          image: postgres:17.11-bookworm
+          envFrom:
+            - configMapRef:
+                name: workboard-config
+          command:
+            - sh
+            - -c
+            - until pg_isready -h "$POSTGRES_HOST" -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do sleep 2; done
+      containers:
+        - name: migrate
+          image: workboard-api
+          command: [alembic, upgrade, head]
+          envFrom:
+            - configMapRef:
+                name: workboard-config
+            - secretRef:
+                name: workboard-db

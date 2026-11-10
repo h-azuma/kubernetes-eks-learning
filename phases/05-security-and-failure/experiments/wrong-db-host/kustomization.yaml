@@ -1,0 +1,16 @@
+# 故障実験: API の DB ホスト名を誤る（env は envFrom の ConfigMap より優先される）。
+# 復旧は kubectl apply -k kustomize/overlays/kind。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../kustomize/overlays/kind
+patches:
+  - target:
+      kind: Deployment
+      name: workboard-api
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: POSTGRES_HOST
+            value: workboard-postgress

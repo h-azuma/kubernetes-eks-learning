@@ -1,0 +1,6 @@
+﻿#Requires -Version 5.1
+. "$PSScriptRoot/../../../tools/kind-common.ps1"
+$ClusterName = 'workboard-phase4'
+$ClusterContext = "kind-$ClusterName"
+$LabKubeconfig = Join-Path $RepositoryRoot '.kube/workboard-phase4.yaml'
+Use-KindEnvironment $LabKubeconfig

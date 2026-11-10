@@ -1,0 +1,26 @@
+# NetworkPolicy の試験用 Pod。どの allow ルールにも一致しないラベルを持つ（default deny の対象）。
+# Restricted の Namespace で作成できるよう、securityContext を明示している。
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe
+  labels:
+    app: probe
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: postgres:17.11-bookworm
+      imagePullPolicy: IfNotPresent
+      command: [sleep, "600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]

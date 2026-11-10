@@ -1,0 +1,25 @@
+# AWS Load Balancer Controller の values（固定する値だけ）。
+# chart: eks/aws-load-balancer-controller 3.6.2（アプリ v3.6.2）。リポジトリ https://aws.github.io/eks-charts
+# 既定値の全体は `helm show values eks/aws-load-balancer-controller --version 3.6.2` で読む。
+# clusterName・region・vpcId は環境ごとに異なるため、このファイルには書かず install-lbc スクリプトが --set で渡す。
+
+replicaCount: 2
+
+# ServiceAccount は chart が作る。IAM ロールは Pod Identity の association（Terraform）が名前で結び付ける。
+# IRSA と違い、ServiceAccount に eks.amazonaws.com/role-arn の annotation は要らない。
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+
+ingressClass: alb
+createIngressClassResource: true
+
+# 使わない機能は明示的に切る。
+enableShield: false
+enableWaf: false
+enableWafv2: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi

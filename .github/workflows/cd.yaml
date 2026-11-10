@@ -1,0 +1,104 @@
+# CD: 手動で起動し、environment「lab」の承認を得てから、ECR への push と EKS への適用を行う。
+# AWS へは GitHub OIDC の一時認証で接続する（長期のアクセスキーは Secrets に置かない）。
+# 前提と設定手順は phases/08-devops-observability/README.md の「CI/CD」を参照。
+name: cd
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同時に 2 回デプロイしない。実行中のものは止めず、後続を待たせる。
+concurrency:
+  group: cd-lab
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: ECR へ push して EKS へ適用する
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # required reviewers を設定した environment。承認されるまでジョブは開始されない。
+    # IAM ロールの信頼ポリシーも、この environment 名のトークンだけを受け付ける。
+    environment: lab
+    permissions:
+      contents: read
+      id-token: write # OIDC トークンの発行に必要
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+      RDS_ENDPOINT: ${{ vars.RDS_ENDPOINT }}
+      ALLOWED_CIDR: ${{ vars.ALLOWED_CIDR }}
+      DB_SECRET_ARN: ${{ vars.DB_SECRET_ARN }}
+    steps:
+      - name: 必須の repository variables を確認する
+        run: |
+          missing=0
+          for name in AWS_REGION AWS_ROLE_ARN EKS_CLUSTER_NAME RDS_ENDPOINT ALLOWED_CIDR DB_SECRET_ARN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::repository variable $name が未設定です。Settings > Secrets and variables > Actions > Variables で設定してください（手順は Phase 8 の README）。"
+              missing=1
+            fi
+          done
+          if [[ "${ALLOWED_CIDR:-}" == 0.0.0.0/* ]]; then
+            echo '::error::ALLOWED_CIDR に 0.0.0.0/0 は指定できません。自分の IP の /32 を指定してください。'
+            missing=1
+          fi
+          exit "$missing"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: ECR へログインしてイメージを push する（タグはコミット SHA）
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          registry="$account_id.dkr.ecr.$AWS_REGION.amazonaws.com"
+          echo "REGISTRY=$registry" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
+          # EKS のノードは x86_64。
+          docker build --platform linux/amd64 --provenance=false --target runtime -t "$registry/workboard-api:$GITHUB_SHA" app/api
+          docker build --platform linux/amd64 --provenance=false -t "$registry/workboard-web:$GITHUB_SHA" app/web
+          docker push "$registry/workboard-api:$GITHUB_SHA"
+          docker push "$registry/workboard-web:$GITHUB_SHA"
+
+      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
+        with:
+          version: v1.34.1
+
+      - name: kubeconfig を作る
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: DB パスワードを Secrets Manager から取り出す（Git には存在しない値）
+        run: |
+          secret_json=$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)
+          password=$(printf '%s' "$secret_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["password"])')
+          echo "::add-mask::$password"
+          (umask 077; printf 'POSTGRES_PASSWORD=%s\n' "$password" > phases/07-aws-integration/kustomize/overlays/eks/secrets/db.env)
+
+      - name: Phase 7 の eks overlay を適用する
+        run: |
+          overlay=phases/07-aws-integration/kustomize/overlays/eks
+          # 完了済み Job の spec は変更できない。Alembic は何度実行しても安全なので、毎回削除してから適用する。
+          kubectl -n workboard delete job workboard-migrate --ignore-not-found
+          # Namespace は Phase 7 で作成済みとする。CD のロールには namespace 内の編集権限しか与えていないため、Namespace は適用しない。
+          kubectl kustomize "$overlay" \
+            | yq eval-all 'select(.kind != "Namespace")' - \
+            | sed -E -e "s|111122223333.dkr.ecr.ap-northeast-1.amazonaws.com|$REGISTRY|g" \
+                  -e "s|workboard-learning-db.example.ap-northeast-1.rds.amazonaws.com|$RDS_ENDPOINT|g" \
+                  -e "s|203.0.113.10/32|$ALLOWED_CIDR|g" \
+                  -e "s#/(workboard-api|workboard-web):phase7#/\1:$GITHUB_SHA#g" \
+            | kubectl apply -f -
+
+      - name: ロールアウトの完了を待つ
+        run: |
+          kubectl -n workboard wait --for=condition=complete job/workboard-migrate --timeout=300s
+          for deployment in workboard-api workboard-web; do
+            kubectl -n workboard rollout status "deployment/$deployment" --timeout=180s
+          done
+          kubectl -n workboard get pods,deploy,svc,ingress

@@ -1,0 +1,49 @@
+# 安全なダミー負荷: 同じ Namespace の workboard-web だけに、2 並列 x 50 回 = 計 100 回の GET を送る。
+# 回数・並列度・間隔は固定。外部ホストは対象にしない。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: workboard-loadgen
+spec:
+  parallelism: 2
+  completions: 2
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: workboard-loadgen
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: loadgen
+          image: nginx:1.30.6-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              ok=0; ng=0
+              for i in $(seq 1 50); do
+                if wget -q -O /dev/null -T 3 http://workboard-web/api/v1/tasks; then ok=$((ok+1)); else ng=$((ng+1)); fi
+                sleep 0.2
+              done
+              echo "success=$ok failure=$ng"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

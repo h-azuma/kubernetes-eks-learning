@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: workboard
+resources:
+  - namespace.yaml
+  - ../../base
+  - ingress.yaml
+# Postgres の component は含めない。DB は RDS（Kubernetes の外）にある。
+# イメージの置き場所はダミーのアカウント ID。実際の値への差し替えは scripts/deploy が行う。
+images:
+  - name: workboard-api
+    newName: 111122223333.dkr.ecr.ap-northeast-1.amazonaws.com/workboard-api
+    newTag: phase7
+  - name: workboard-web
+    newName: 111122223333.dkr.ecr.ap-northeast-1.amazonaws.com/workboard-web
+    newTag: phase7
+configMapGenerator:
+  - name: workboard-config
+    literals:
+      # RDS のエンドポイント。ダミー値。実際の値は scripts/deploy が terraform output から差し替える。
+      - POSTGRES_HOST=workboard-learning-db.example.ap-northeast-1.rds.amazonaws.com
+      - POSTGRES_DB=workboard
+      - POSTGRES_USER=workboard
+      # libpq の環境変数。RDS は TLS を必須にしている。require は暗号化するが、サーバー証明書は検証しない（decisions/0013）。
+      - PGSSLMODE=require
+      - API_HOST=workboard-api.workboard.svc.cluster.local
+secretGenerator:
+  - name: workboard-db
+    envs:
+      - secrets/db.env

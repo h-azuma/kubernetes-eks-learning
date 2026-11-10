@@ -1,0 +1,16 @@
+# 故障実験: API の memory limit を極端に小さくして OOMKilled にする。復旧は kubectl apply -k kustomize/overlays/kind。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../kustomize/overlays/kind
+patches:
+  - target:
+      kind: Deployment
+      name: workboard-api
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 20Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 20Mi

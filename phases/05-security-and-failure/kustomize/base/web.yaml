@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workboard-web
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workboard-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workboard-web
+  template:
+    metadata:
+      labels:
+        app: workboard-web
+    spec:
+      serviceAccountName: workboard-web
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+        # 非 root の nginx が 80 番で待ち受けるため、1024 未満のポートを非特権で使えるようにする（安全な sysctl）。
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
+      containers:
+        - name: web
+          image: workboard-web
+          envFrom:
+            - configMapRef:
+                name: workboard-config
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          # 読み取り専用のルートでも、起動時の設定生成・一時ファイル・PID ファイルだけは書けるようにする。
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/nginx/conf.d
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /run
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: conf
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workboard-web
+spec:
+  type: ClusterIP
+  selector:
+    app: workboard-web
+  ports:
+    - port: 80
+      targetPort: 80

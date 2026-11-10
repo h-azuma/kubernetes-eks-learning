@@ -33,15 +33,16 @@ assert_kind_prerequisites() {
   [[ "$docker_os" == 'linux' ]] || die 'Docker の Linux コンテナエンジンを起動してください。'
 }
 
+# 4 番目の引数（待ち時間）を空にすると --wait を付けない（CNI を後から入れる Phase 5 など、作成直後は Node が Ready にならない場合）。
 initialize_kind_cluster() {
-  local name="$1" kubeconfig="$2" config_path="$3" clusters
+  local name="$1" kubeconfig="$2" config_path="$3" wait="${4-180s}" clusters
   clusters=$(kind get clusters) || die 'kind クラスター一覧を取得できません。'
   if ! grep -qxF -- "$name" <<<"$clusters"; then
     if [[ -e "$kubeconfig" ]]; then
       die 'クラスターはありませんが専用 kubeconfig が残っています。対象を確認してから対処してください。'
     fi
     mkdir -p "$(dirname "$kubeconfig")"
-    kind create cluster --name "$name" --config "$config_path" --kubeconfig "$kubeconfig" --wait 180s
+    kind create cluster --name "$name" --config "$config_path" --kubeconfig "$kubeconfig" ${wait:+--wait "$wait"}
   elif [[ ! -e "$kubeconfig" ]]; then
     die '同名クラスターが既にありますが、この教材の kubeconfig がありません。自動変更はしません。'
   fi

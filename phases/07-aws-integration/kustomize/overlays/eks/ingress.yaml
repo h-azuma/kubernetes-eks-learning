@@ -1,0 +1,27 @@
+# AWS Load Balancer Controller（ingressClassName: alb）が ALB を作る。community の ingress-nginx ではない。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: workboard
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    # 学習者のグローバル IP だけを許可する。ダミー値（TEST-NET-3）。実際の値は scripts/deploy が環境変数から差し替える。
+    alb.ingress.kubernetes.io/inbound-cidrs: 203.0.113.10/32
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    # web Pod 自身の応答を見る。DB の障害で全ターゲットが unhealthy になる連鎖を避ける（decisions/0014）。
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/tags: Project=workboard-learning,Phase=07-aws-integration
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: workboard-web
+                port:
+                  number: 80

@@ -1,0 +1,15 @@
+# Pod Security Standards の試験用。Restricted に違反するため、作成が拒否されることを確認する。
+apiVersion: v1
+kind: Pod
+metadata:
+  name: violating
+spec:
+  restartPolicy: Never
+  containers:
+    - name: violating
+      image: postgres:17.11-bookworm
+      imagePullPolicy: IfNotPresent
+      command: [sleep, "60"]
+      securityContext:
+        privileged: true
+        runAsUser: 0

@@ -1,0 +1,16 @@
+# metrics-server v0.9.1 の公式 components.yaml をそのまま置き、kind 用のパッチだけを当てる。
+# kube-system に入れるため、Namespace を付け替える overlays/kind とは別に適用する。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - components.yaml
+patches:
+  # kind の kubelet は、クラスターの CA ではなく自己署名の証明書を提示する。
+  # ローカル実験でだけ検証を省略する（本番・EKS では付けない）。
+  - target:
+      kind: Deployment
+      name: metrics-server
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kubelet-insecure-tls

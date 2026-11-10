@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: workboard
+resources:
+  - namespace.yaml
+  - ../../base
+components:
+  - ../../components/postgres-local
+images:
+  - name: workboard-api
+    newTag: kind
+  - name: workboard-web
+    newTag: kind
+patches:
+  - target:
+      kind: Deployment|Job
+      name: workboard-(api|web|migrate)
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+  # Argo CD は完了済み Job の spec を更新できない。同期のたびに作り直す hook にする。
+  # kubectl apply -k で直接適用するときは、この annotation は無視される。
+  - target:
+      kind: Job
+      name: workboard-migrate
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/hook: Sync
+          argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+configMapGenerator:
+  - name: workboard-config
+    literals:
+      - POSTGRES_HOST=workboard-postgres
+      - POSTGRES_DB=workboard
+      - POSTGRES_USER=workboard
+      - API_HOST=workboard-api.workboard.svc.cluster.local
+# Secret（workboard-db）はここに含めない。Git に入れられない値なので、scripts/up が db.env から作る（decisions/0015）。

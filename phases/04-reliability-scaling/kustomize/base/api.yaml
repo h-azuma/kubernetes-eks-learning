@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workboard-api
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: workboard-api
+  template:
+    metadata:
+      labels:
+        app: workboard-api
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          # taint で Pod を置けない control-plane を分散の対象から外す。
+          # 外さないと Pod が 0 個のノードが最小値になり、worker に 1 Pod ずつしか置けない。
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              app: workboard-api
+      containers:
+        - name: api
+          image: workboard-api
+          envFrom:
+            - configMapRef:
+                name: workboard-config
+            - secretRef:
+                name: workboard-db
+          ports:
+            - containerPort: 8000
+          # Pod の終了時、Service の宛先から外れる伝播を待ってから SIGTERM を送る。
+          # 待たないと、ローリング更新中に終了直前の Pod へ届いた要求が 502 になる。
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          # 起動完了まで liveness/readiness を止める。最大 2 秒 × 30 回 = 60 秒待つ。
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            periodSeconds: 2
+            failureThreshold: 30
+          # DB に依存しない。DB 障害で API を再起動させないため、liveness は /health/live を使う。
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # DB 接続を確認する。失敗した Pod は Service の宛先から外れるだけで、再起動はされない。
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            periodSeconds: 3
+            timeoutSeconds: 4
+            failureThreshold: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workboard-api
+spec:
+  type: ClusterIP
+  selector:
+    app: workboard-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: workboard-api
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: workboard-api
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: workboard-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: workboard-api
+  minReplicas: 3
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60

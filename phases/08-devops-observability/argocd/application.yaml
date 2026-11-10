@@ -1,0 +1,19 @@
+# WorkBoard の kind overlay を同期対象にする Application。
+# repoURL と targetRevision はプレースホルダー。scripts/up が適用後に、学習者の値へ書き換える
+# （GITOPS_REPO_URL / GITOPS_REVISION、無ければ clone の origin と今のブランチ）。
+# Git に push されていないリビジョンは同期できない（ComparisonError になる）。
+# syncPolicy を書いていないため、既定の手動同期になる。自動同期は README の手順で一時的に有効にする。
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: workboard
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR-ACCOUNT/kubernetes-eks-learning.git
+    targetRevision: main
+    path: phases/08-devops-observability/kustomize/overlays/kind
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: workboard

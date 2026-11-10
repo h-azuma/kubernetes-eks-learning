@@ -1,0 +1,159 @@
+# CI: push / pull_request ごとに、コードとマニフェストが壊れていないかを確認する。
+# イメージは push しない。AWS の認証情報も使わない（デプロイは cd.yaml）。
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API の単体・API テスト
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_USER: workboard_test
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: workboard_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workboard_test -d workboard_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_USER: workboard_test
+      POSTGRES_PASSWORD: ci-only-password
+      POSTGRES_DB: workboard_test
+    defaults:
+      run:
+        working-directory: app/api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - run: pip install -c requirements.lock '.[test]'
+      - run: alembic upgrade head
+      - run: pytest -q -p no:cacheprovider
+
+  web:
+    name: Web の型検査とビルド
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app/web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.22.2"
+      - run: npm ci
+      - run: npm run build # tsc --noEmit && vite build
+
+  portal:
+    name: 学習ポータルのテストとビルド
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.22.2"
+      - run: python -m unittest discover -s learning-portal/tests
+      - run: npm ci
+        working-directory: learning-portal
+      - run: npm run build
+        working-directory: learning-portal
+
+  images:
+    name: Docker イメージのビルド（push しない）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build --provenance=false --target runtime -t workboard-api:ci app/api
+      - run: docker build --provenance=false -t workboard-web:ci app/web
+
+  manifests:
+    name: Kustomize の生成確認
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
+        with:
+          version: v1.34.1
+      - name: Secret の入力ファイルを例から作る（Git 管理外のため）
+        run: |
+          for example in phases/*/kustomize/overlays/*/secrets/*.env.example; do
+            cp -n "$example" "${example%.example}"
+          done
+      - name: 生成できることを確認する（base と components は overlay 経由で確認される）
+        run: |
+          status=0
+          while IFS= read -r kustomization; do
+            directory=$(dirname "$kustomization")
+            echo "== $directory"
+            kubectl kustomize "$directory" > /dev/null || status=1
+          done < <(find phases -path '*/kustomize/*' -name kustomization.yaml -not -path '*/base/*' -not -path '*/components/*' | sort)
+          exit "$status"
+
+  terraform:
+    name: Terraform の整形・検証
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.1
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive phases
+      - name: init -backend=false と validate
+        run: |
+          for directory in phases/*/terraform; do
+            echo "== $directory"
+            terraform -chdir="$directory" init -backend=false -input=false
+            terraform -chdir="$directory" validate
+          done
+
+  scripts:
+    name: シェルスクリプトの構文確認
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Bash の構文確認
+        run: |
+          status=0
+          for script in tools/*.sh phases/*/scripts/*.sh; do
+            bash -n "$script" || status=1
+          done
+          exit "$status"
+      - name: PowerShell の構文解析
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem tools, phases -Recurse -Filter *.ps1) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors)
+            if ($errors) { $errors | ForEach-Object { Write-Error "$($file.FullName): $_" }; $failed = $true }
+          }
+          if ($failed) { exit 1 }

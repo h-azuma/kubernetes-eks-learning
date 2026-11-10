@@ -1,0 +1,37 @@
+# HPA の観察用の負荷。同じクラスター内の Service workboard-api だけを叩く。
+# 開始: kubectl apply -f phases/04-reliability-scaling/load/load-generator.yaml
+# 停止: kubectl delete -f phases/04-reliability-scaling/load/load-generator.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workboard-load
+  namespace: workboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: workboard-load
+  template:
+    metadata:
+      labels:
+        app: workboard-load
+    spec:
+      containers:
+        - name: load
+          image: busybox:1.37.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              for i in 1 2 3 4; do
+                while true; do wget -q -O /dev/null http://workboard-api:8000/api/v1/tasks; done &
+              done
+              wait
+          resources:
+            requests:
+              cpu: 50m
+              memory: 16Mi
+            limits:
+              cpu: 400m
+              memory: 32Mi

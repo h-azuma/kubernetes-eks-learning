@@ -1,0 +1,16 @@
+# 故障実験: 存在しない image tag。復旧は kubectl apply -k kustomize/overlays/kind。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../kustomize/overlays/kind
+patches:
+  - target:
+      kind: Deployment
+      name: workboard-web
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: nginx:1.30.6-alpine-no-such-tag
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent

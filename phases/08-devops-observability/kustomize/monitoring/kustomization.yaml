@@ -1,0 +1,13 @@
+# Prometheus の最小構成。各リソースの namespace は個別に書く
+# （Role だけは監視対象の workboard に置くため、kustomization の namespace では上書きしない）。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - prometheus.yaml
+configMapGenerator:
+  - name: prometheus-config
+    namespace: monitoring
+    files:
+      - prometheus.yml

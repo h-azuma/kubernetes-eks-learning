@@ -1,0 +1,16 @@
+# コピーして terraform.tfvars を作り、自分の値に置き換える（terraform.tfvars は Git 管理外）。
+# ここにはダミー値だけを書く。実アカウント ID をこのファイルに書かない。
+
+allowed_account_id = "111122223333"
+
+# ロールを引き受けてよいリポジトリ（owner/name）。fork を使う場合は自分のもの。
+github_repository = "example-org/kubernetes-eks-learning"
+
+# github_environment = "lab"
+# cluster_name       = "workboard-learning"
+
+# アカウントに GitHub の OIDC プロバイダーが既にある場合は false。
+# create_github_oidc_provider = true
+
+# Phase 7 の terraform output db_master_secret_arn の値。空のままなら CD は DB パスワードを読めない。
+# db_master_secret_arn = "arn:aws:secretsmanager:ap-northeast-1:111122223333:secret:example"

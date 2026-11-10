@@ -37,7 +37,8 @@ function Assert-KindPrerequisites {
 }
 
 function Initialize-KindCluster {
-    param([string]$Name, [string]$Kubeconfig, [string]$ConfigPath)
+    # Wait を空にすると --wait を付けない（CNI を後から入れる Phase 5 など、作成直後は Node が Ready にならない場合）。
+    param([string]$Name, [string]$Kubeconfig, [string]$ConfigPath, [string]$Wait = '180s')
     $clusters = @(& kind get clusters)
     if ($LASTEXITCODE -ne 0) { throw 'kind クラスター一覧を取得できません。' }
     if ($clusters -notcontains $Name) {
@@ -45,7 +46,9 @@ function Initialize-KindCluster {
             throw 'クラスターはありませんが専用 kubeconfig が残っています。対象を確認してから対処してください。'
         }
         New-Item -ItemType Directory -Force (Split-Path $Kubeconfig) | Out-Null
-        Invoke-Checked kind @('create', 'cluster', '--name', $Name, '--config', $ConfigPath, '--kubeconfig', $Kubeconfig, '--wait', '180s')
+        $arguments = @('create', 'cluster', '--name', $Name, '--config', $ConfigPath, '--kubeconfig', $Kubeconfig)
+        if ($Wait) { $arguments += @('--wait', $Wait) }
+        Invoke-Checked kind $arguments
     }
     elseif (-not (Test-Path $Kubeconfig)) {
         throw '同名クラスターが既にありますが、この教材の kubeconfig がありません。自動変更はしません。'

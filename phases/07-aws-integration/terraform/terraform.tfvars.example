@@ -1,0 +1,11 @@
+# コピーして terraform.tfvars を作り、自分の値に置き換える（terraform.tfvars は Git 管理外）。
+# ここにはダミー値だけを書く。実アカウント ID をこのファイルに書かない。
+
+allowed_account_id = "111122223333"
+
+# Phase 6 で作ったクラスターの名前（Phase 6 の cluster_name と同じにする）。
+# cluster_name = "workboard-learning"
+
+# db_instance_class        = "db.t4g.micro"
+# db_multi_az              = false
+# db_backup_retention_days = 7
