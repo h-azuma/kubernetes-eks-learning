@@ -42,9 +42,13 @@ API には Prometheus 形式の `GET /metrics` が加わりました（`workboar
 
 すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase4` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。
 
+各コマンドは 1 つずつ実行します。コマンドの直前の「目的」で何のために打つかを、直後の「確認」で出力のどこを見るかを確かめてから、次のコマンドへ進みます。
+
 ### 1. 適用前に生成結果を読む
 
 新しいターミナルごとに最初の行を実行します。`env.ps1`（Bash は `env.sh`。実行ではなく `source` で読み込みます）はこのシェルだけで Phase 4 用の kubeconfig（`.kube/workboard-phase4.yaml`）を使う設定です。
+
+目的：このシェルだけで Phase 4 用の kubeconfig を使う設定にして、以降の `kubectl` が `workboard-phase4` を向くようにします。
 
 **Windows (PowerShell):**
 
@@ -58,13 +62,33 @@ API には Prometheus 形式の `GET /metrics` が加わりました（`workboar
 source phases/04-reliability-scaling/scripts/env.sh
 ```
 
+確認：画面に出力は想定していません。エラーが出なければ設定済みです。Bash で `source` を付けずに実行した場合は、`source` で読み込み直してください。
+
+目的：`base`（Web・API・DB の共通部分）だけを生成して、適用前に読みます。
+
 ```text
 kubectl kustomize phases/04-reliability-scaling/kustomize/base
+```
+
+確認：API の Deployment に `replicas`、`strategy`、`topologySpreadConstraints`、3 つの Probe、`resources`、`lifecycle` があることを見ます。
+
+目的：`overlay`（kind 用）を生成して、`base` に差分が重なった適用前の最終形を読みます。Secret の入力は Git 管理外の `phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env` で、無いと読み込みに失敗します（次のコピーか、「2. 構築」のスクリプトで用意できます）。
+
+```text
 kubectl kustomize phases/04-reliability-scaling/kustomize/overlays/kind
+```
+
+確認：出力に PodDisruptionBudget と HorizontalPodAutoscaler が含まれることを見ます。
+
+目的：`metrics-server` の定義を生成して、適用前に読みます。`kube-system` 用で、`workboard` の overlay とは別の適用単位です。
+
+```text
 kubectl kustomize phases/04-reliability-scaling/kustomize/metrics-server
 ```
 
-Secret の入力は Git 管理外の `phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env` です。まだ無い場合、次の「2. 構築」のスクリプトがローカル専用のランダムな値で作成します。自分で用意する場合は、例ファイル（ダミー値のみ）をコピーして値を変えます。
+確認：出力が `kube-system` 用であること、引数に `--kubelet-insecure-tls` が追加されていることを見ます。
+
+目的：Secret の入力ファイル `db.env` を、例ファイル（ダミー値のみ）のコピーとして用意します。まだ無い場合は次の「2. 構築」のスクリプトがローカル専用のランダムな値で作成するため、自分で用意する場合だけ実行し、コピー後に値を変えます。
 
 **Windows (PowerShell):**
 
@@ -78,29 +102,11 @@ Copy-Item phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env.e
 cp phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env.example phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env
 ```
 
-観察する点は以下です。
-
-- API の Deployment に `replicas`、`strategy`、`topologySpreadConstraints`、3 つの Probe、`resources`、`lifecycle` があること。
-- `overlay` の出力に PodDisruptionBudget と HorizontalPodAutoscaler が含まれること。
-- `metrics-server` の出力は `kube-system` 用で、`workboard` の overlay とは別の適用単位になっていること。`--kubelet-insecure-tls` が引数に追加されていること。
+確認：エラーが出なければ `db.env` が作られています。コピーしただけではダミー値のままなので、エディターで自分の値に変えます。`db.env` は Git に入れません。
 
 ### 2. 構築
 
-**Windows (PowerShell):**
-
-```powershell
-powershell -NoProfile -File tools/kind-install.ps1
-powershell -NoProfile -File phases/04-reliability-scaling/scripts/up.ps1
-```
-
-**Linux / macOS / WSL (Bash):**
-
-```bash
-bash tools/kind-install.sh
-bash phases/04-reliability-scaling/scripts/up.sh
-```
-
-`kind-install` は導入済みなら何もしません。構築スクリプトは次の順で、固定秒数の sleep ではなく実際の状態を待ちます。
+構築スクリプトは次の順で、固定秒数の sleep ではなく実際の状態を待ちます。
 
 1. `workboard-phase4` クラスターの作成（存在しなければ）。同名クラスターのみ・kubeconfig のみ残っている場合は確認のため停止します。他のクラスターには何も適用しません。
 2. API/Web イメージのビルドと `kind load docker-image`（`imagePullPolicy: Never` のため投入忘れは `ErrImageNeverPull` になります）。
@@ -111,69 +117,175 @@ bash phases/04-reliability-scaling/scripts/up.sh
 
 metrics-server のイメージはノードが `registry.k8s.io` から取得します。ネットワークに接続できる環境が必要です。
 
-期待結果は、Node が 3 台とも Ready、API が 3/3、Web が 2/2、StatefulSet が 1/1、PVC が Bound、migration Job が Completed、`hpa` の TARGETS が `cpu: 数値%/50%`（数値が `<unknown>` の間は metrics-server の準備待ちです）です。
+目的：kind が未導入なら導入します（導入済みなら何もしません）。Phase 2 と共通のスクリプトです。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File tools/kind-install.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+bash tools/kind-install.sh
+```
+
+確認：エラーが出ずに終了すれば完了です。導入済みの場合は何も変更されません。
+
+目的：上の 1〜6 の構築（クラスター作成、イメージ投入、metrics-server と overlay の適用、準備完了待ち）を実行して、control-plane 1 台と worker 2 台の `workboard-phase4` に WorkBoard を作ります。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File phases/04-reliability-scaling/scripts/up.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+bash phases/04-reliability-scaling/scripts/up.sh
+```
+
+確認：エラーなく終了することを見ます。期待結果は、Node が 3 台とも Ready、API が 3/3、Web が 2/2、StatefulSet が 1/1、PVC が Bound、migration Job が Completed、`hpa` の TARGETS が `cpu: 数値%/50%` です。数値が `<unknown>` の間は metrics-server の準備待ちです。
 
 ### 3. 配置・Probe・resources を観察する
 
+目的：Node が 3 台あり、すべて Ready か確認します。
+
 ```text
 kubectl --context kind-workboard-phase4 get nodes
+```
+
+確認：control-plane 1 台と worker 2 台が、すべて `Ready` であることを見ます。
+
+目的：Web・API・DB の Pod がどのノードに置かれているか一覧します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -o wide
+```
+
+確認：API Pod が 2 台の worker にどう配置されているか、control-plane に Pod が載っていないかを見ます。Web や PostgreSQL の配置もここから比べます。
+
+目的：API の Deployment の Probe（Startup・Liveness・Readiness）と更新戦略、`resources` の設定を読みます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard describe deployment workboard-api
+```
+
+確認：`Liveness` / `Readiness` / `Startup` の行で、それぞれの確認先とパラメーターを読みます。
+
+目的：API Pod ごとの配置ノードと QoS クラスを確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pod -l app=workboard-api -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,QOS:.status.qosClass
+```
+
+確認：Pod ごとの NODE と QOS の列を見ます。Web や PostgreSQL の QoS も、同じ形式のコマンドで比べます。
+
+目的：PodDisruptionBudget と HorizontalPodAutoscaler の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pdb,hpa
 ```
 
-API Pod が 2 台の worker にどう配置されているか、control-plane に Pod が載っていないか、QoS クラス、PDB の `ALLOWED DISRUPTIONS` を確認します。`describe` の `Liveness` / `Readiness` / `Startup` の行で、それぞれの確認先とパラメーターを読みます。Web や PostgreSQL の配置・QoS も同じコマンドの出力から比べます。
+確認：PDB の `ALLOWED DISRUPTIONS` を見ます。HPA の TARGETS が `cpu: 数値%/50%` になっていることも見ます（`<unknown>` の間は metrics-server の準備待ちです）。
 
 ### 4. metrics-server と使用量
 
+目的：メトリクス API（APIService）が使える状態か確認します。
+
 ```text
 kubectl --context kind-workboard-phase4 get apiservice v1beta1.metrics.k8s.io
+```
+
+確認：AVAILABLE が `True` であることを見ます。
+
+目的：Node の使用量を取得できるか確認します。
+
+```text
 kubectl --context kind-workboard-phase4 top nodes
+```
+
+確認：各 Node の CPU とメモリが値で返ることを見ます。構築直後に `Metrics not available` を返す場合は、数十秒待って再実行します。
+
+目的：`workboard` の Pod の使用量を取得して、`requests` / `limits` を決めた値と比べる材料にします。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard top pods
+```
+
+確認：アイドル時の API Pod の CPU とメモリを記録し、`requests` / `limits` を決めた値と比べます。
+
+目的：HPA の現在の状態（TARGETS と REPLICAS）を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get hpa workboard-api
+```
+
+確認：TARGETS が `cpu: 数値%/50%` で、REPLICAS が現在の Pod 数と合っていることを見ます。
+
+目的：HPA の詳細（対象、メトリクス、最小・最大レプリカ数、イベント）を読みます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard describe hpa workboard-api
 ```
 
-APIService が `True` で、`top` が値を返すことを確認します。構築直後に `top` が `Metrics not available` を返す場合は、数十秒待って再実行します。アイドル時の API Pod の CPU とメモリを記録し、`requests` / `limits` を決めた値と比べます。
+確認：最小・最大レプリカ数、目標の CPU 使用率、Conditions とイベントを読みます。
 
 ### 5. ブラウザーで同じアプリを使う
 
-8082 番が使われていないことを確認し、次のコマンドを実行中のまま残してブラウザーを別に開きます。
+目的：Web Service をホストの 8082 番へ転送して、ブラウザーから WorkBoard を使えるようにします。実行前に 8082 番が使われていないことを確認し、このコマンドは別のターミナルで実行したままにして、ブラウザーと次の確認コマンドは別のターミナルで操作します。
 
 ```text
 kubectl --context kind-workboard-phase4 -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8082:80
 ```
 
-[http://localhost:8082](http://localhost:8082) でダミータスクを作ります。別のターミナルで次の確認もできます。
+確認：コマンドは終了せずに待機し続けます。[http://localhost:8082](http://localhost:8082) でダミータスクを作ります。`port-forward` は Service を指定しても、起動時に選ばれた **1 つの Web Pod** にだけつながります。その Pod が削除・退避されると接続が切れます（`curl` が失敗する、`port-forward` のコマンドが終了する）。実験中に応答が止まったら、まず Web Pod が消えていないかを確認し、このコマンドを再実行します。
+
+目的：別のターミナルで、Web 経由の API が準備完了か確認します。
 
 **Windows (PowerShell):**
 
 ```powershell
 curl.exe -i http://localhost:8082/health/ready
-curl.exe -s http://localhost:8082/api/v1/tasks
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 curl -i http://localhost:8082/health/ready
+```
+
+確認：ステータス行が `200` であることを見ます。
+
+目的：作成したタスクが API から返ることを確認します。
+
+**Windows (PowerShell):**
+
+```powershell
+curl.exe -s http://localhost:8082/api/v1/tasks
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 curl -s http://localhost:8082/api/v1/tasks
 ```
 
-`port-forward` は Service を指定しても、起動時に選ばれた **1 つの Web Pod** にだけつながります。その Pod が削除・退避されると接続が切れます（`curl` が失敗する、`port-forward` のコマンドが終了する）。実験中に応答が止まったら、まず Web Pod が消えていないかを確認し、このコマンドを再実行します。
+確認：JSON に、作成したダミータスクが含まれることを見ます。
 
-`/metrics` は Web（Nginx）を経由せず、API Pod の中から確認します。
+目的：API の Prometheus 形式のメトリクス（`/metrics`）を確認します。`/metrics` は Web（Nginx）を経由しないため、API Pod の中から取得します。
 
 ```text
 kubectl --context kind-workboard-phase4 -n workboard exec deploy/workboard-api -- python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/metrics').read().decode())"
 ```
 
-`workboard_http_requests_total` の `route` ラベルが、実際の ID ではなく `/api/v1/tasks/{task_id}` のようなテンプレートになっていることを確認します。
+確認：`workboard_http_requests_total` と `workboard_http_request_duration_seconds` が出力されていることを見ます。`workboard_http_requests_total` の `route` ラベルが、実際の ID ではなく `/api/v1/tasks/{task_id}` のようなテンプレートになっていることも確認します。
 
 ### 6. HTTP 応答を記録しながら Rolling Update を観察する
 
-別のターミナルで、8082 番への応答を 0.5 秒ごとに記録します（時刻・HTTP ステータス・所要秒数。接続できないとステータスは `000`）。止めるときは `Ctrl+C` です。
+目的：別のターミナルで、8082 番への応答を 0.5 秒ごとに記録します（時刻・HTTP ステータス・所要秒数。接続できないとステータスは `000`）。このコマンドは実行したままにして、止めるときは `Ctrl+C` です。
 
 **Windows (PowerShell):**
 
@@ -187,16 +299,39 @@ powershell -NoProfile -File phases/04-reliability-scaling/scripts/watch-http.ps1
 bash phases/04-reliability-scaling/scripts/watch-http.sh http://localhost:8082/api/v1/tasks 0.5
 ```
 
-この記録を流したまま、API の Pod を順に入れ替えます。
+確認：0.5 秒ごとに 1 行ずつ「時刻・ステータス・所要秒数」が流れ、ステータスが `200` であることを見ます。以降の手順の間も流したままにして、ステータスが 200 以外のものがないかを確認します。
+
+目的：この記録を流したまま、API の Pod を順に入れ替えます（Rolling Update）。API の Pod が作り直されますが、アプリのデータは変わりません。
 
 ```text
 kubectl --context kind-workboard-phase4 -n workboard rollout restart deployment/workboard-api
+```
+
+確認：`deployment.apps/workboard-api restarted` と表示されます。更新中の Pod 数の変化（`maxSurge` / `maxUnavailable` の効果）を `get pods` などで確かめます。
+
+目的：Rolling Update が完了するまで待ちます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=120s
+```
+
+確認：待機が終わり、120 秒のタイムアウトで失敗しないことを見ます。
+
+目的：新旧の ReplicaSet を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get replicaset -l app=workboard-api
+```
+
+確認：ReplicaSet が新旧 2 世代あることを見ます。
+
+目的：Deployment のリビジョン履歴を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout history deployment/workboard-api
 ```
 
-更新中の Pod 数の変化（`maxSurge` / `maxUnavailable` の効果）、ReplicaSet が新旧 2 世代あること、記録の中にステータスが 200 以外のものがないかを確認します。
+確認：リビジョン番号が増えていることを見ます。`watch-http` の記録の中に、ステータスが 200 以外のものがないかも確認します。
 
 ## 故障実験
 
@@ -204,120 +339,381 @@ kubectl --context kind-workboard-phase4 -n workboard rollout history deployment/
 
 ### A. API Pod を削除する
 
+目的：削除する前の API Pod の名前と配置ノードを記録します。
+
 ```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api -o wide
+```
+
+確認：API Pod の名前と NODE を控えます。削除する Pod を 1 つ選び、次のコマンドの `<API Pod の名前>` に使います。
+
+目的：選んだ API Pod を 1 つ削除して、Deployment に作り直させます。削除した Pod は戻せませんが、Deployment が新しい Pod を作ります。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard delete pod <API Pod の名前>
+```
+
+確認：`pod "<API Pod の名前>" deleted` と表示されます。この時刻を、`watch-http` の応答が変化した時刻と比べるために記録します。
+
+目的：Pod 数の推移と、新しい Pod が Ready になるまでの時間を観察します。`-w` は変化があるたびに表示を続けるため、観察が終わったら `Ctrl+C` で止めます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api -w
+```
+
+確認：Pod 数の推移と、新しい Pod がどのノードに置かれるか（分散が保たれるか）、新しい Pod が Ready になるまでの時間を記録します。`watch-http` の応答の変化も合わせて記録します。
+
+目的：Pod の削除と作り直しに伴うイベントを時系列で読みます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get events --sort-by=.lastTimestamp
 ```
 
-Pod 数の推移、新しい Pod がどのノードに置かれるか（分散が保たれるか）、`watch-http` の応答の変化、新しい Pod が Ready になるまでの時間、`Startup probe failed` などのイベントを記録します。`-w` は `Ctrl+C` で止めます。
+確認：`Startup probe failed` などのイベントを記録します。
 
 ### B. DB を一時停止する
 
+目的：StatefulSet のレプリカ数を 0 にして、DB を一時停止します。DB が止まる間、API は DB に接続できません。PVC は残るため、タスクは残ります。戻すときは後のコマンドで `--replicas=1` にします。
+
 ```text
 kubectl --context kind-workboard-phase4 -n workboard scale statefulset workboard-postgres --replicas=0
+```
+
+確認：`statefulset.apps/workboard-postgres scaled` と表示されます。この時刻と、`watch-http` の HTTP ステータスの変化（とその順序）を記録します。
+
+目的：DB が止まっている間の API Pod の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api
+```
+
+確認：API Pod の READY と RESTARTS を見ます。実装時の検証では、3 つとも READY 0/1、RESTARTS 0 でした。Liveness と Readiness のどちらが、どの動作を引き起こしたかを説明できるか確認します。
+
+目的：Service の宛先（endpoints）を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get endpoints workboard-api
+```
+
+確認：Ready な Pod が無いため、宛先が空になることを見ます。
+
+目的：DB を戻します。StatefulSet のレプリカ数を 1 に戻します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard scale statefulset workboard-postgres --replicas=1
+```
+
+確認：`statefulset.apps/workboard-postgres scaled` と表示されます。この時刻を、200 に戻るまでの時間を測る起点として記録します。
+
+目的：DB の StatefulSet が準備完了になるまで待ちます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout status statefulset/workboard-postgres --timeout=120s
+```
+
+確認：待機が終わり、120 秒のタイムアウトで失敗しないことを見ます。
+
+目的：復旧後の API Pod の READY と RESTARTS を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount
 ```
 
-DB が止まっている間の API Pod の READY と RESTARTS、Service の宛先（endpoints）、HTTP ステータスの変化（とその順序）、DB が戻ってから 200 に戻るまでの時間を記録します。Liveness と Readiness のどちらが、どの動作を引き起こしたかを説明できるか確認します。PVC は残るため、タスクは残ります。
+確認：READY が `true` に戻ることを見ます。DB が戻ってから 200 に戻るまでの時間と、RESTARTS が増えたかどうかを記録します。PVC は残るため、タスクは残ります。
 
 ### C. Readiness が失敗する更新を適用する
 
 Readiness Probe の確認先を存在しないパスに変え、更新が進むかを観察します。
 
+目的：Readiness Probe の確認先を存在しないパス `/health/nope` に変えます。Deployment のテンプレートが変わるため、新しい Pod が作られます。元に戻すときは、この実験の最後の `rollout undo` を使います。
+
 ```text
 kubectl --context kind-workboard-phase4 -n workboard patch deployment workboard-api --type=json -p '[{"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/httpGet/path","value":"/health/nope"}]'
+```
+
+確認：`deployment.apps/workboard-api patched` と表示されます。
+
+目的：更新が進むか、完了するのを待って確かめます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=30s
+```
+
+確認：新しい Pod が Ready にならないため、更新は完了せずタイムアウトします。実装時の検証でも、更新は進みませんでした。
+
+目的：新旧の Pod の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api
+```
+
+確認：新旧の Pod 数と `READY` の列を記録します。実装時の検証では、新しい Pod が `0/1` のまま、旧 3 Pod は Ready のままでした。
+
+目的：Deployment の AVAILABLE を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get deployment workboard-api
+```
+
+確認：AVAILABLE の数を記録します。実装時の検証では 3 でした。`watch-http` の応答が途切れるかも確認します。
+
+目的：新しい Pod のイベントから、Readiness が失敗した理由を読みます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard describe pod -l app=workboard-api
 ```
 
-新旧の Pod 数、`READY` の列、Deployment の `AVAILABLE`、`describe` のイベントを記録します。`watch-http` の応答が途切れるかも確認します。戻すときは次を実行します。
+確認：`describe` のイベントに `Readiness probe failed` が出ていることを見ます。実装時の検証では `HTTP probe failed with statuscode: 404` でした。
+
+目的：変更を元に戻します。直前のリビジョンへ `rollout undo` します。
 
 ```text
 kubectl --context kind-workboard-phase4 -n workboard rollout undo deployment/workboard-api
+```
+
+確認：`deployment.apps/workboard-api rolled back` と表示されます。
+
+目的：元に戻した更新が完了するまで待ちます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=120s
 ```
+
+確認：待機が終わり、120 秒のタイムアウトで失敗しないことを見ます。
 
 ### D. CPU 負荷を与えて HPA を観察する
 
-負荷生成用の Deployment `workboard-load` は、同じクラスター内の Service `workboard-api` だけを繰り返し呼び出します。別のターミナルで HPA の状態を流しておきます。
+負荷生成用の Deployment `workboard-load` は、同じクラスター内の Service `workboard-api` だけを繰り返し呼び出します。
+
+目的：HPA の状態を流し続けます。このコマンドは別のターミナルで実行したままにして、負荷の開始から終了後まで TARGETS と REPLICAS の推移を見ます。止めるときは `Ctrl+C` です。
 
 ```text
 kubectl --context kind-workboard-phase4 -n workboard get hpa workboard-api -w
 ```
+
+確認：コマンドは終了せずに、変化があるたびに行が追加されます。負荷の開始時刻、`TARGETS` の値と `REPLICAS` の推移を記録します。
+
+目的：負荷生成用の Deployment を適用して、API に CPU 負荷を与えます。止めるときは後の `delete -f` を使います。
 
 ```text
 kubectl --context kind-workboard-phase4 apply -f phases/04-reliability-scaling/load/load-generator.yaml
+```
+
+確認：`workboard-load` の Deployment が作られたと表示されます。適用した時刻を負荷の開始時刻として記録します。
+
+目的：負荷中の Pod の CPU・メモリの使用量を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard top pods
+```
+
+確認：API Pod の CPU が、アイドル時より大きく増えていることを見ます。
+
+目的：HPA によって増えた API Pod の配置を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api -o wide
+```
+
+確認：増えた Pod の配置（ノードごとの数）を記録します。
+
+目的：HPA のイベントから、増減の理由と上限を読みます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard describe hpa workboard-api
 ```
 
-負荷の開始時刻、`TARGETS` の値と `REPLICAS` の推移、増えた Pod の配置（ノードごとの数）、`describe hpa` のイベント（`SuccessfulRescale` の理由と上限）を記録します。次に負荷を止め、レプリカ数が戻るまでの時間を測ります。
+確認：`describe hpa` のイベント（`SuccessfulRescale` の理由と上限）を記録します。
+
+目的：負荷を止めます。負荷生成の Deployment を削除します。レプリカ数が元に戻るまでの時間を、この後の手順で測ります。
 
 ```text
 kubectl --context kind-workboard-phase4 delete -f phases/04-reliability-scaling/load/load-generator.yaml
+```
+
+確認：`workboard-load` の Deployment が削除されたと表示されます。この時刻を、レプリカ数が戻るまでの時間を測る起点として記録します。
+
+目的：負荷を止めた後の HPA の推移を流します。このコマンドは別のターミナルで実行したままにして、レプリカ数が戻るまでの時間を測ります。止めるときは `Ctrl+C` です。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get hpa workboard-api -w
 ```
 
+確認：TARGETS が低下し、REPLICAS が元の数に戻るまでの時間を記録します。
+
 ### E. 存在しないイメージで更新し、rollback する
+
+目的：API のイメージを存在しないタグ `workboard-api:does-not-exist` に変えます。Deployment のテンプレートが変わるため、新しい Pod が作られます。元に戻すときは、この実験の `rollout undo` を使います。
 
 ```text
 kubectl --context kind-workboard-phase4 -n workboard set image deployment/workboard-api api=workboard-api:does-not-exist
+```
+
+確認：`deployment.apps/workboard-api image updated` と表示されます。
+
+目的：新しい Pod の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api
+```
+
+確認：新しい Pod の STATUS を見ます。kind では `imagePullPolicy: Never` のため `ErrImageNeverPull` になります。旧 Pod が残るか、HTTP 応答が途切れるかも記録します。
+
+目的：新旧の ReplicaSet を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get replicaset -l app=workboard-api
+```
+
+確認：旧 ReplicaSet の Pod が残っているか、新しい ReplicaSet の Pod が Ready にならないかを見ます。
+
+目的：更新が進むか、完了するのを待って確かめます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=30s
+```
+
+確認：新しい Pod が Ready にならないため、更新は完了せずタイムアウトします。`rollout status` が終わらない理由を記録します。
+
+目的：rollback 前のリビジョン履歴を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout history deployment/workboard-api
+```
+
+確認：新しいリビジョンが増えていることを見ます。リビジョン番号を控え、undo 後と比べます。
+
+目的：直前のリビジョンへ rollback します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout undo deployment/workboard-api
+```
+
+確認：`deployment.apps/workboard-api rolled back` と表示されます。
+
+目的：rollback した更新が完了するまで待ちます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=120s
+```
+
+確認：待機が終わり、120 秒のタイムアウトで失敗しないことを見ます。
+
+目的：rollback 後のイメージ名を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get deployment workboard-api -o jsonpath='{.spec.template.spec.containers[0].image}'
 ```
 
-新しい Pod の STATUS（kind では `imagePullPolicy: Never` のため `ErrImageNeverPull`）、旧 ReplicaSet の Pod が残るか、HTTP 応答が途切れるか、`rollout status` が終わらない理由を記録します。undo 後のイメージ名とリビジョン番号の変化も確認します。`set image` で変えた内容は Git のマニフェストには反映されません。構築スクリプトの再実行（`apply -k`）で、マニフェストの内容へ戻ります。
+確認：元のイメージ名（`workboard-api:kind`）に戻っていることを見ます。undo 後のリビジョン番号の変化も確認します。`set image` で変えた内容は Git のマニフェストには反映されません。構築スクリプトの再実行（`apply -k`）で、マニフェストの内容へ戻ります。
 
 ### F. ノードを drain し、PDB の効果を見る
 
 **先に PostgreSQL がどのノードにいるかを確認します。** kind の PV はそのノード内のディレクトリで、Pod はそのノードに固定されます。
 
+目的：PostgreSQL がどのノードにいるか、各 Pod の配置を確認します。drain の対象にする worker を選ぶための確認です。
+
 ```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -o wide
 ```
 
-PostgreSQL がいない worker を drain の対象にします（以下は `workboard-phase4-worker2` の例。違う場合は読み替えます）。
+確認：PostgreSQL（`workboard-postgres-0`）がいる NODE を控えます。PostgreSQL がいない worker を drain の対象にします（以下は `workboard-phase4-worker2` の例。違う場合は読み替えます）。
+
+目的：drain の前の PodDisruptionBudget の状態を記録します。
 
 ```text
 kubectl --context kind-workboard-phase4 -n workboard get pdb
+```
+
+確認：`ALLOWED DISRUPTIONS` を控えます。
+
+目的：PostgreSQL がいない worker を drain して、Pod を追い出します。ノードは `SchedulingDisabled` になり、後で `uncordon` で戻します。
+
+```text
 kubectl --context kind-workboard-phase4 drain workboard-phase4-worker2 --ignore-daemonsets --delete-emptydir-data --timeout=120s
+```
+
+確認：追い出された Pod の種類と数、drain にかかった時間を記録します。実装時の検証では約 8 秒で完了しました。この時点では `port-forward` の接続先 Web Pod が退避された場合に応答が止まるため、必要なら手順 5 を再実行します。
+
+目的：追い出された Pod の移動先を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -o wide
+```
+
+確認：追い出された Pod が、残ったノードで再作成されていることを見ます。移動先を記録します。
+
+目的：drain 後の PodDisruptionBudget の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pdb
+```
+
+確認：`ALLOWED DISRUPTIONS` を、drain 前の記録と比べます。
+
+目的：drain したノードの状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 get nodes
 ```
 
-追い出された Pod の種類と数、移動先、drain にかかった時間、`ALLOWED DISRUPTIONS` を記録します。この時点では `port-forward` の接続先 Web Pod が退避された場合に応答が止まるため、必要なら手順 5 を再実行します。
+確認：drain したノードが `SchedulingDisabled` になっていることを見ます。
 
-次に、残った worker も drain して、PDB が何を止めるかを確認します（PostgreSQL も追い出され、DB が停止します。ダミーデータで行います）。
+目的：次に、残った worker も drain して、PDB が何を止めるかを確認します。PostgreSQL（PDB なし）も追い出されて DB が停止します（ダミーデータで行います）。最後の `uncordon` で必ず元に戻します。
 
 ```text
 kubectl --context kind-workboard-phase4 drain workboard-phase4-worker --ignore-daemonsets --delete-emptydir-data --timeout=40s
+```
+
+確認：drain のメッセージ（どの Pod の何が拒否されるか）を記録します。実装時の検証では、API の追い出しが `Cannot evict pod as it would violate the pod's disruption budget` で拒否され、40 秒で `global timeout reached` になりました。
+
+目的：drain 後の Pod の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pods -o wide
+```
+
+確認：Pending の Pod とその理由（`describe pod` のイベント）、PostgreSQL の状態を記録します。
+
+目的：drain 後の PodDisruptionBudget の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard get pdb
 ```
 
-drain のメッセージ（どの Pod の何が拒否されるか）、Pending の Pod とその理由（`describe pod` のイベント）、PostgreSQL の状態を記録します。最後に必ず元へ戻します。
+確認：`ALLOWED DISRUPTIONS` を記録します。
+
+目的：最後に必ず元へ戻します。両方の worker の `SchedulingDisabled` を解除します。
 
 ```text
 kubectl --context kind-workboard-phase4 uncordon workboard-phase4-worker workboard-phase4-worker2
+```
+
+確認：2 つのノードに `uncordoned` と表示されます。
+
+目的：API が元の状態に戻るまで待ちます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=120s
+```
+
+確認：待機が終わり、120 秒のタイムアウトで失敗しないことを見ます。
+
+目的：PostgreSQL が元の状態に戻るまで待ちます。
+
+```text
 kubectl --context kind-workboard-phase4 -n workboard rollout status statefulset/workboard-postgres --timeout=120s
+```
+
+確認：待機が終わり、120 秒のタイムアウトで失敗しないことを見ます。
+
+目的：すべての Node が使える状態に戻ったか確認します。
+
+```text
 kubectl --context kind-workboard-phase4 get nodes
 ```
+
+確認：3 台とも `Ready` で、`SchedulingDisabled` が残っていないことを見ます。
 
 ## 失敗時に確認すること
 
@@ -342,11 +738,13 @@ port-forward を実行しているターミナルで `Ctrl+C` を押すと入口
 
 `workboard-phase4` を削除すると、PVC/PV に保存した DB のデータも失われます。クラスター名と消えるデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。他のクラスターは対象外です。
 
+目的：`workboard-phase4` クラスターを削除します。DB のデータも失われる破壊的な操作です。
+
 ```text
 kind delete cluster --name workboard-phase4
 ```
 
-削除後、専用 kubeconfig `.kube/workboard-phase4.yaml` が残っていれば対象を確認してそのファイルだけ削除します。`db.env` は残して再利用できます。**クラスター（PVC）を残したまま `db.env` を消さないでください。** 構築スクリプトが別のパスワードを生成し、初期化済みの DB と一致しなくなります。
+確認：クラスター削除の完了メッセージが表示されます。削除後、専用 kubeconfig `.kube/workboard-phase4.yaml` が残っていれば対象を確認してそのファイルだけ削除します。`db.env` は残して再利用できます。**クラスター（PVC）を残したまま `db.env` を消さないでください。** 構築スクリプトが別のパスワードを生成し、初期化済みの DB と一致しなくなります。
 
 ## 完了条件
 
@@ -396,7 +794,7 @@ kind delete cluster --name workboard-phase4
 | アイドル時の使用量（`kubectl top`） | API Pod: CPU 3〜5m、メモリ約 65Mi。Web: CPU 1〜2m、メモリ約 12Mi。PostgreSQL: CPU 23〜24m、メモリ 31〜38Mi |
 | 故障実験 A: API Pod 削除 | 50 回（約 25 秒）すべて 200。新しい Pod は約 8 秒で Ready（`Startup probe failed` を数回記録）。新しい Pod は削除した Pod と同じノード（worker2）に置かれ、API は worker 2 台に 2/1 の配置を維持した |
 | 故障実験 B: DB 停止（scale 0）→ 復帰 | 停止直後に `000`（2 秒のタイムアウト）→ `500` → `502` の順。API Pod は 3 つとも READY 0/1、RESTARTS 0、Service の endpoints は空。`scale --replicas=1` の約 3 秒後に 200 が戻り、停止から復旧まで約 30 秒。タスクは残った |
-| 故障実験 C: Readiness のパスを `/health/nope` に変更 | 新 Pod が `0/1` のまま更新が進まず（`rollout status` は 10 秒でタイムアウト）、旧 3 Pod は Ready のまま。Deployment は AVAILABLE 3、新旧合計 4 Pod。イベントは `Readiness probe failed: HTTP probe failed with statuscode: 404`。40 回の応答はすべて 200。`rollout undo` で復旧 |
+| 故障実験 C: Readiness のパスを `/health/nope` に変更 | 新 Pod が `0/1` のまま更新が進まず（`rollout status` はタイムアウト。記録の待ち時間は 10 秒で、現在の手順の `--timeout=30s` とは異なる）、旧 3 Pod は Ready のまま。Deployment は AVAILABLE 3、新旧合計 4 Pod。イベントは `Readiness probe failed: HTTP probe failed with statuscode: 404`。40 回の応答はすべて 200。`rollout undo` で復旧 |
 | 故障実験 E: `workboard-api:does-not-exist` に更新 | 新 Pod は `ErrImageNeverPull`、旧 3 Pod は Ready のまま。`rollout status` は 30 秒でも完了せず。35 回の応答はすべて 200。`rollout undo` で元のイメージ名 `workboard-api:kind` に戻った |
 | `rollout restart`（preStop なしの定義）3 回 | 各回 69〜79 回の 200 と 1 回の 502（毎回 1 回、計 3 回再現） |
 | `rollout restart`（`preStop` で 5 秒待つ定義）3 回 | 各回 80 回すべて 200、502 は 0 回。更新の所要は約 14 秒（1 回の計測） |

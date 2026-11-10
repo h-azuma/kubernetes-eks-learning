@@ -60,6 +60,8 @@ Argo CD が同期するのは **自分が push できる公開リポジトリ** 
 
 新しいターミナルごとに最初の行を実行します。`env.ps1`（Bash は `env.sh`。実行ではなく `source` で読み込みます）はこのシェルだけで Phase 8 用の kubeconfig（`.kube/workboard-phase8.yaml`）を使う設定です。
 
+目的：このシェルだけで Phase 8 用の kubeconfig（`.kube/workboard-phase8.yaml`）を使う設定にして、以降の `kubectl` が `workboard-phase8` を向くようにします。
+
 **Windows (PowerShell):**
 
 ```powershell
@@ -72,12 +74,25 @@ Argo CD が同期するのは **自分が push できる公開リポジトリ** 
 source phases/08-devops-observability/scripts/env.sh
 ```
 
+確認：画面に出力は想定していません。エラーが出なければ設定済みです。Bash で `source` を付けずに実行した場合は、`source` で読み込み直してください。
+
+目的：Argo CD の同期対象になる `overlays/kind` を生成して、適用前の最終形を読みます。
+
 ```text
 kubectl kustomize phases/08-devops-observability/kustomize/overlays/kind
+```
+
+確認：次の 2 点を見ます。(1) 出力に Secret が含まれず、Deployment が `workboard-db` という名前の Secret を参照していること。Phase 4 の `overlays/kind` との違いも比べます。(2) 移行用 Job に Argo CD 用の annotation（`argocd.argoproj.io/hook`）が付いていること。
+
+目的：Prometheus の資材（`monitoring`）を生成して、適用前の最終形を読みます。
+
+```text
 kubectl kustomize phases/08-devops-observability/kustomize/monitoring
 ```
 
-Secret の入力は Git 管理外の `phases/08-devops-observability/kustomize/overlays/kind/secrets/db.env` です。まだ無い場合、次の「2. 構築」のスクリプトがローカル専用のランダムな値で作成します。自分で用意する場合は、例ファイル（ダミー値のみ）をコピーして値を変えます。
+確認：次の 2 点を見ます。(1) Prometheus の Role と RoleBinding が `workboard` namespace に置かれ、`monitoring` の ServiceAccount に結び付いていること。ClusterRole が無いこと。(2) `prometheus.yml` の `relabel_configs` が、どの Pod のどのポートだけを残すか。
+
+目的：Secret の入力は Git 管理外の `secrets/db.env` です。まだ無い場合、次の「2. 構築」のスクリプトがローカル専用のランダムな値で作成します。自分で用意する場合だけ、ダミー値だけの例ファイルをコピーして値を変えます。
 
 **Windows (PowerShell):**
 
@@ -91,28 +106,9 @@ Copy-Item phases/08-devops-observability/kustomize/overlays/kind/secrets/db.env.
 cp phases/08-devops-observability/kustomize/overlays/kind/secrets/db.env.example phases/08-devops-observability/kustomize/overlays/kind/secrets/db.env
 ```
 
-観察する点は以下です。
-
-- `overlays/kind` の出力に Secret が含まれず、Deployment が `workboard-db` という名前の Secret を参照していること。Phase 4 の `overlays/kind` との違い。
-- 移行用 Job に Argo CD 用の annotation（`argocd.argoproj.io/hook`）が付いていること。
-- Prometheus の Role と RoleBinding が `workboard` namespace に置かれ、`monitoring` の ServiceAccount に結び付いていること。ClusterRole が無いこと。
-- `prometheus.yml` の `relabel_configs` が、どの Pod のどのポートだけを残すか。
+確認：エラーが出なければ `db.env` が作られています。コピーしただけではダミー値のままなので、自分で用意する場合はエディターで値を変えます。`db.env` は Git に入れません。
 
 ### 2. 構築
-
-**Windows (PowerShell):**
-
-```powershell
-powershell -NoProfile -File tools/kind-install.ps1
-powershell -NoProfile -File phases/08-devops-observability/scripts/up.ps1
-```
-
-**Linux / macOS / WSL (Bash):**
-
-```bash
-bash tools/kind-install.sh
-bash phases/08-devops-observability/scripts/up.sh
-```
 
 `kind-install` は導入済みなら何もしません。構築スクリプトは次の順で、固定秒数の sleep ではなく実際の状態を待ちます。
 
@@ -124,19 +120,67 @@ bash phases/08-devops-observability/scripts/up.sh
 6. PostgreSQL・migration Job・Web/API・Prometheus・Argo CD の準備完了と、Application の CRD が使えることを待機。
 7. `argocd/application.yaml` を適用し、`repoURL` / `targetRevision` を「前提条件」の順で決めた値に書き換えます（ファイルの値はプレースホルダーです）。使った値は「Argo CD の同期対象: …」として表示されます。
 
-期待結果は、Node が 3 台とも Ready、API が 3/3、Web が 2/2、StatefulSet が 1/1、migration Job が Completed、`monitoring` の Prometheus が 1/1、`argocd` の 7 つの Pod が Running です。Application `workboard` は、Git に Phase 8 の資材が **push されるまで** `ComparisonError` で `Unknown` になります（次の節の 5 で確認します）。
+目的：kind が未導入なら導入します（導入済みなら何もしません）。Phase 2 と共通のスクリプトです。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File tools/kind-install.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+bash tools/kind-install.sh
+```
+
+確認：エラーが出ずに終了すれば完了です。導入済みの場合は何も変更されません。
+
+目的：上の 1〜7 の構築（クラスター作成、イメージ投入、`apply -k`、Argo CD と Prometheus の導入、準備完了待ち）を実行して、`workboard-phase8` を作ります。イメージのビルドを含めて時間がかかります。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File phases/08-devops-observability/scripts/up.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+bash phases/08-devops-observability/scripts/up.sh
+```
+
+確認：エラーなく終了することを見ます。期待結果は、Node が 3 台とも Ready、API が 3/3、Web が 2/2、StatefulSet が 1/1、migration Job が Completed、`monitoring` の Prometheus が 1/1、`argocd` の 7 つの Pod が Running です。Application `workboard` は、Git に Phase 8 の資材が **push されるまで** `ComparisonError` で `Unknown` になります（次の節の 5 で確認します）。
 
 ### 3. WorkBoard とメトリクスを確認する
 
 3 つの `port-forward` を、それぞれ別のターミナルで実行したままにします。8084・8085・8087 番が使われていないことを先に確認します。
 
+目的：WorkBoard の Web を、ローカルの 8084 番から開けるようにします。**別のターミナルで実行したままにします。**
+
 ```text
 kubectl --context kind-workboard-phase8 -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8084:80
+```
+
+確認：`Forwarding from 127.0.0.1:8084` で始まる行が表示され、プロンプトに戻らなければ待ち受け中です。[http://localhost:8084](http://localhost:8084) を開いてダミータスクを作ります。`port-forward` は起動時に選ばれた 1 つの Web Pod にだけつながります。その Pod が削除されると接続が切れるので、切れたらコマンドを再実行します。
+
+目的：Prometheus の画面を、ローカルの 8087 番から開けるようにします。**別のターミナルで実行したままにします。**
+
+```text
 kubectl --context kind-workboard-phase8 -n monitoring port-forward --address 127.0.0.1 svc/prometheus 8087:9090
+```
+
+確認：`Forwarding from 127.0.0.1:8087` で始まる行が表示され、プロンプトに戻らなければ待ち受け中です。
+
+目的：Argo CD の画面を、ローカルの 8085 番から開けるようにします。**別のターミナルで実行したままにします。**
+
+```text
 kubectl --context kind-workboard-phase8 -n argocd port-forward --address 127.0.0.1 svc/argocd-server 8085:443
 ```
 
-[http://localhost:8084](http://localhost:8084) でダミータスクを作ります。次に、リクエストを一定間隔で送り続けます（別のターミナル）。
+確認：`Forwarding from 127.0.0.1:8085` で始まる行が表示され、プロンプトに戻らなければ待ち受け中です。
+
+目的：API へリクエストを一定間隔（0.5 秒）で送り続けて、メトリクスに値が出るようにします。**別のターミナルで実行したままにします。**
 
 **Windows (PowerShell):**
 
@@ -150,66 +194,97 @@ powershell -NoProfile -File phases/08-devops-observability/scripts/watch-http.ps
 bash phases/08-devops-observability/scripts/watch-http.sh http://localhost:8084/api/v1/tasks 0.5
 ```
 
-`port-forward` は起動時に選ばれた 1 つの Web Pod にだけつながります。その Pod が削除されると接続が切れるので、切れたらコマンドを再実行します。
+確認：リクエストの結果（ステータスなど）が間隔ごとに表示され続ければ動いています。止めるときは `Ctrl+C` を押します。
 
-Prometheus の接続確認と、収集対象の確認です。
+目的：Prometheus が起動して、リクエストを受け付けられる状態かを確認します。
 
 **Windows (PowerShell):**
 
 ```powershell
 curl.exe -s http://localhost:8087/-/ready
-curl.exe -s "http://localhost:8087/api/v1/query?query=up"
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 curl -s http://localhost:8087/-/ready
+```
+
+確認：Ready を示す応答が返れば成功です。接続できない場合は、8087 の `port-forward` が動いているかを確かめます。
+
+目的：Prometheus の収集対象の状態（`up`）を API で確認します。
+
+**Windows (PowerShell):**
+
+```powershell
+curl.exe -s "http://localhost:8087/api/v1/query?query=up"
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 curl -s "http://localhost:8087/api/v1/query?query=up"
 ```
 
-[http://localhost:8087/targets](http://localhost:8087/targets) で `workboard-api` の対象が API Pod の数だけ `UP` になっていることを確認します。Pod の名前と IP がどのラベルから来ているかも見ます。
+確認：JSON の `result` に、`workboard-api` の対象が API Pod の数だけ `value` の 2 つ目が `1`（`UP`）で並びます。[http://localhost:8087/targets](http://localhost:8087/targets) でも `workboard-api` の対象が API Pod の数だけ `UP` になっていることを確認します。Pod の名前と IP がどのラベルから来ているかも見ます。
 
 ### 4. PromQL でリクエスト率・エラー率・p95 を求める
 
 [http://localhost:8087/graph](http://localhost:8087/graph) の入力欄に貼り付けて、それぞれ Table と Graph で見ます（`watch-http` を流したままにします）。ヘルスチェック（`/health/*`）は kubelet が呼ぶため、利用者のリクエストと分けて除外しています。
 
+目的：リクエスト率（毎秒の件数）を求めます。ヘルスチェック（`/health/*`）は除外しています。
+
 ```text
 sum(rate(workboard_http_requests_total{route!~"/health/.*"}[1m]))
 ```
+
+確認：値が `watch-http` の間隔（0.5 秒なら毎秒約 2）と合うかを見ます。
+
+目的：エラー率（5xx の割合）を求めます。分子は 5xx、分母は全リクエスト（ヘルスチェックを除く）です。
 
 ```text
 sum(rate(workboard_http_requests_total{route!~"/health/.*",status=~"5.."}[5m])) / sum(rate(workboard_http_requests_total{route!~"/health/.*"}[5m]))
 ```
 
+確認：4xx（存在しない ID など）がエラー率に入るか入らないかを確認します。入れるかどうかは、SLI の定義で決めることです。分母が 0 のときの表示（`NaN` や空）も観察します。
+
+目的：応答時間の p95 を、ヒストグラムから求めます。
+
 ```text
 histogram_quantile(0.95, sum by (le) (rate(workboard_http_request_duration_seconds_bucket{route!~"/health/.*"}[5m])))
 ```
+
+確認：ヒストグラムの p95 が、バケットの境界の値になる理由を考えます。
+
+目的：`route` と `status` ごとのリクエスト件数の増え方を見ます。
 
 ```text
 sum by (route, status) (increase(workboard_http_requests_total{route!~"/health/.*"}[5m]))
 ```
 
+確認：`route` と `status` の組み合わせごとの系列が並びます。新しく現れた系列に対する `increase` の値も観察します。
+
+目的：API プロセスのメモリ使用量を見ます。
+
 ```text
 process_resident_memory_bytes{job="workboard-api"}
 ```
+
+確認：API Pod ごとの系列が並びます。`process_*` から読めるもの（API Pod の再起動、メモリ）と、読めないもの（Web Pod、ノード、DB の状態）を整理します。
+
+目的：1 時間以内の API プロセスの再起動回数を見ます。
 
 ```text
 changes(process_start_time_seconds{job="workboard-api"}[1h])
 ```
 
-観察する点は以下です。
-
-- リクエスト率が `watch-http` の間隔（0.5 秒なら毎秒約 2）と合うか。
-- 4xx（存在しない ID など）がエラー率に入るか入らないか。入れるかどうかは、SLI の定義で決めること。
-- ヒストグラムの p95 が、バケットの境界の値になる理由。
-- `process_*` から読めるもの（API Pod の再起動、メモリ）と、読めないもの（Web Pod、ノード、DB の状態）。
-
-エラー率の式の分母が 0 のときの表示（`NaN` や空）と、新しく現れた系列に対する `increase` の値も観察します。
+確認：再起動していなければ `0` です。`process_*` から読めるもの・読めないものの整理は、上のメモリの式と合わせて行います。
 
 ### 5. Argo CD を開き、push 前の状態を確認する
 
 初期の管理者パスワードは、ローカルの Secret から取り出します（この kind クラスターだけの値です。共有や記録をしないでください）。ユーザー名は `admin` です。
+
+目的：Argo CD の初期の管理者パスワードを、ローカルの Secret から取り出して表示します（この kind クラスターだけの値です。共有や記録をしないでください）。
 
 **Windows (PowerShell):**
 
@@ -223,33 +298,60 @@ kubectl --context kind-workboard-phase8 -n argocd get secret argocd-initial-admi
 kubectl --context kind-workboard-phase8 -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-[https://localhost:8085](https://localhost:8085) を開きます（自己署名証明書の警告が出ます。この `port-forward` 経由の localhost だけで使います）。
+確認：パスワードの文字列が 1 行表示されます。ユーザー名は `admin` です。[https://localhost:8085](https://localhost:8085) を開いてログインします（自己署名証明書の警告が出ます。この `port-forward` 経由の localhost だけで使います）。
+
+目的：Argo CD の Application `workboard` の状態を確認します。
 
 ```text
 kubectl --context kind-workboard-phase8 -n argocd get application workboard
+```
+
+確認：`SYNC STATUS` と `HEALTH STATUS` が表示されます。Git に push されていないリビジョンは同期できないため、clone した直後や、Phase 8 の変更を自分のリポジトリにまだ push していない場合は `Unknown`（`ComparisonError`）になります。
+
+目的：Application が参照する `repoURL`・`targetRevision` と、状態のメッセージを取り出します。
+
+```text
 kubectl --context kind-workboard-phase8 -n argocd get application workboard -o jsonpath='{.spec.source.repoURL}{"\n"}{.spec.source.targetRevision}{"\n"}{.status.conditions[*].message}{"\n"}'
 ```
 
-Application が参照する `repoURL`・`targetRevision`・`path` と、同期の状態を確認します。**Git に push されていないリビジョンは同期できません。** clone した直後や、Phase 8 の変更を自分のリポジトリにまだ push していない場合は `ComparisonError` になります。
+確認：1 行目が `repoURL`、2 行目が `targetRevision`、3 行目以降が状態のメッセージです。Application が参照する `repoURL`・`targetRevision`・`path` と、同期の状態を確認します。**Git に push されていないリビジョンは同期できません。** clone した直後や、Phase 8 の変更を自分のリポジトリにまだ push していない場合は `ComparisonError` になります。
 
 同期できるようにする手順は 2 通りです。どちらも、自分でコミットし push する操作を伴います（push は学習者が自分の判断で行います）。
 
 - 自分の fork に Phase 8 の資材を push し、`up` を再実行する。`origin` が自分の fork で、push したブランチにいれば、環境変数は要りません。別のリポジトリやブランチを同期したいときは、下のように環境変数を付けて再実行します。
 - リポジトリが非公開の場合、Argo CD にリポジトリの認証情報の登録が必要です。この Lab は公開リポジトリだけを前提にします（非公開リポジトリの認証情報の扱いは対象外）。
 
-**Windows (PowerShell):**
+目的：Windows (PowerShell) のみ。同期したいリポジトリの URL を、このシェルの環境変数 `GITOPS_REPO_URL` に設定します。`<自分のユーザー>/<リポジトリ>` は自分の fork に置き換えます。別のリポジトリを同期したいときだけ必要です。
 
 ```powershell
 $env:GITOPS_REPO_URL = 'https://github.com/<自分のユーザー>/<リポジトリ>.git'
+```
+
+確認：画面に出力は想定していません。エラーが出なければ設定済みです。
+
+目的：Windows (PowerShell) のみ。同期したいブランチ（リビジョン）を、環境変数 `GITOPS_REVISION` に設定します。`<ブランチ>` は push したブランチに置き換えます。
+
+```powershell
 $env:GITOPS_REVISION = '<ブランチ>'
+```
+
+確認：画面に出力は想定していません。エラーが出なければ設定済みです。
+
+目的：Windows (PowerShell) のみ。環境変数で決めた同期先で `up` を再実行し、Application の `repoURL` / `targetRevision` を書き換えます。
+
+```powershell
 powershell -NoProfile -File phases/08-devops-observability/scripts/up.ps1
 ```
 
-**Linux / macOS / WSL (Bash):**
+確認：エラーなく終了し、「Argo CD の同期対象: …」として使われた値が表示されます。
+
+目的：Bash のみ。環境変数 `GITOPS_REPO_URL` と `GITOPS_REVISION` を付けて `up` を再実行し、Application の同期先を書き換えます（1 コマンドです）。`<自分のユーザー>/<リポジトリ>` と `<ブランチ>` は置き換えます。
 
 ```bash
 GITOPS_REPO_URL='https://github.com/<自分のユーザー>/<リポジトリ>.git' GITOPS_REVISION='<ブランチ>' bash phases/08-devops-observability/scripts/up.sh
 ```
+
+確認：エラーなく終了し、「Argo CD の同期対象: …」として使われた値が表示されます。
 
 ### 6. 同期、drift、revert を観察する
 
@@ -257,28 +359,69 @@ Git に push 済みのリビジョンを参照できるようになってから�
 
 画面の「Refresh」と「Sync」を使うか、次のコマンドを使います。
 
+目的：Argo CD に、Git の最新の状態を強制的に取り込ませます（画面の「Refresh」に当たります）。
+
 **Windows (PowerShell):**
 
 ```powershell
 kubectl --context kind-workboard-phase8 -n argocd annotate application workboard argocd.argoproj.io/refresh=hard --overwrite
-kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type merge -p '{\"operation\":{\"sync\":{}}}'
-kubectl --context kind-workboard-phase8 -n argocd get application workboard
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 kubectl --context kind-workboard-phase8 -n argocd annotate application workboard argocd.argoproj.io/refresh=hard --overwrite
+```
+
+確認：`application.argoproj.io/workboard annotated` と表示されます。
+
+目的：手動で同期を開始します（画面の「Sync」に当たります）。
+
+**Windows (PowerShell):**
+
+```powershell
+kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type merge -p '{\"operation\":{\"sync\":{}}}'
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type merge -p '{"operation":{"sync":{}}}'
+```
+
+確認：`application.argoproj.io/workboard patched` と表示されます。
+
+目的：同期後の Application の状態を確認します。
+
+**Windows (PowerShell):**
+
+```powershell
 kubectl --context kind-workboard-phase8 -n argocd get application workboard
 ```
 
-期待結果は `SYNC STATUS` が `Synced`、`HEALTH STATUS` が `Healthy` です。最初の同期の前は、`kubectl apply` で作った既存のリソースも `OutOfSync` と表示されることがあります。何が違うのか、画面の Diff で確認します。移行 Job が同期のたびに作り直されることも確認します。
+**Linux / macOS / WSL (Bash):**
+
+```bash
+kubectl --context kind-workboard-phase8 -n argocd get application workboard
+```
+
+確認：期待結果は `SYNC STATUS` が `Synced`、`HEALTH STATUS` が `Healthy` です。最初の同期の前は、`kubectl apply` で作った既存のリソースも `OutOfSync` と表示されることがあります。何が違うのか、画面の Diff で確認します。移行 Job が同期のたびに作り直されることも確認します。
+
+目的：同期した Git のリビジョンを取り出します。
 
 ```text
 kubectl --context kind-workboard-phase8 -n argocd get application workboard -o jsonpath='{.status.sync.revision}{"\n"}'
+```
+
+確認：コミット SHA が 1 行表示されます。push したコミットと一致することを確かめます。
+
+目的：移行 Job と Pod の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase8 -n workboard get job,pods
 ```
+
+確認：移行 Job が `Complete` になっています。同期のたびに作り直されること（Argo CD の hook）を、Job の経過時間から確かめます。
 
 ### 7. CI をローカルで再現する
 
@@ -294,25 +437,71 @@ kubectl --context kind-workboard-phase8 -n workboard get job,pods
 | `terraform` | `terraform fmt -check -recursive phases`、`phases/*/terraform` ごとに `init -backend=false` と `validate` |
 | `scripts` | `bash -n`、PowerShell の構文解析 |
 
+ジョブ内で `uses:` のアクションがコミット SHA で固定されている理由と、`permissions` が `contents: read` だけである理由を確認します。
+
+目的：`portal` ジョブのうち、学習ポータルのテストを実行します。
+
 **Windows (PowerShell):**
 
 ```powershell
 python -m unittest discover -s learning-portal/tests
-kubectl kustomize phases/08-devops-observability/kustomize/overlays/kind | Out-Null; $LASTEXITCODE
-terraform -chdir=phases/08-devops-observability/terraform init -backend=false
-terraform -chdir=phases/08-devops-observability/terraform validate
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 python3 -m unittest discover -s learning-portal/tests
+```
+
+確認：末尾に `OK` と表示されれば成功です。失敗したテストがあれば、名前と原因を読みます。
+
+目的：`manifests` ジョブのうち、Phase 8 の `overlays/kind` が生成できるかを確認します。生成結果は捨てて、終了コードだけを表示します。
+
+**Windows (PowerShell):**
+
+```powershell
+kubectl kustomize phases/08-devops-observability/kustomize/overlays/kind | Out-Null; $LASTEXITCODE
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 kubectl kustomize phases/08-devops-observability/kustomize/overlays/kind > /dev/null; echo $?
+```
+
+確認：`0` が表示されれば生成に成功しています。0 以外なら、`secrets/db.env` が無いなどの原因を `kubectl kustomize` のメッセージで確認します。
+
+目的：`terraform` ジョブのうち、Phase 8 の Terraform の provider を取得します（AWS には接続しません）。
+
+**Windows (PowerShell):**
+
+```powershell
 terraform -chdir=phases/08-devops-observability/terraform init -backend=false
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+terraform -chdir=phases/08-devops-observability/terraform init -backend=false
+```
+
+確認：`Terraform has been successfully initialized!` が表示されれば成功です。`terraform init` は `.terraform/` を作ります（Git の対象外）。
+
+目的：`terraform` ジョブのうち、Phase 8 の Terraform の文法と引数の整合を確認します。
+
+**Windows (PowerShell):**
+
+```powershell
 terraform -chdir=phases/08-devops-observability/terraform validate
 ```
 
-`terraform init` は `.terraform/` を作ります（Git の対象外）。ジョブ内で `uses:` のアクションがコミット SHA で固定されている理由と、`permissions` が `contents: read` だけである理由を確認します。
+**Linux / macOS / WSL (Bash):**
+
+```bash
+terraform -chdir=phases/08-devops-observability/terraform validate
+```
+
+確認：`Success! The configuration is valid.` が表示されれば成功です。
 
 ## CI/CD（AWS 承認後に学習者が行う）
 
@@ -322,13 +511,31 @@ CI（`ci.yaml`）は push と pull request ごとに動き、AWS の認証情報
 
 Phase 6 の EKS クラスターと Phase 7 の RDS が稼働している状態で、GitHub の OIDC プロバイダーと CD 用 IAM ロールを作ります。**`terraform apply` は AWS の利用を承認した後に、学習者が自分で実行します。**
 
+変数は `terraform.tfvars.example` をコピーした `terraform.tfvars`（Git 管理外）に書きます。`github_repository` は CD を動かす GitHub リポジトリ（`owner/name`）です。同じ URL の OIDC プロバイダーが既にあるアカウントでは、`create_github_oidc_provider = false` にします。
+
+目的：Terraform を初期化します。AWS の利用を承認した後に、学習者が自分で実行します。
+
 ```text
 terraform -chdir=phases/08-devops-observability/terraform init
+```
+
+確認：`Terraform has been successfully initialized!` が表示されるはずです（未検証）。
+
+目的：AWS に何が作られるか（差分）を読みます。`plan` は何も作成しません。
+
+```text
 terraform -chdir=phases/08-devops-observability/terraform plan
+```
+
+確認：出力の末尾に `Plan: N to add, 0 to change, 0 to destroy.` のような件数が表示されるはずです（未検証）。`plan` の出力で、作られるリソース（OIDC プロバイダー、IAM ロール、ロールのインラインポリシー、EKS の access entry と access policy association）と、信頼ポリシーの条件（`aud` と `sub`）、ロールの権限（ECR の push 先、`eks:DescribeCluster` の対象、Secrets Manager の対象）を読んでから承認します。
+
+目的：`plan` で読んだ差分を AWS に実際に作成します（GitHub の OIDC プロバイダーと CD 用 IAM ロール）。**AWS の利用を承認した後に、学習者が自分で、明示的に判断してから実行します。** 前提として Phase 6 の EKS クラスターと Phase 7 の RDS が稼働しています（それらの費用が続いています）。
+
+```text
 terraform -chdir=phases/08-devops-observability/terraform apply
 ```
 
-変数は `terraform.tfvars.example` をコピーした `terraform.tfvars`（Git 管理外）に書きます。`github_repository` は CD を動かす GitHub リポジトリ（`owner/name`）です。`plan` の出力で、作られるリソース（OIDC プロバイダー、IAM ロール、ロールのインラインポリシー、EKS の access entry と access policy association）と、信頼ポリシーの条件（`aud` と `sub`）、ロールの権限（ECR の push 先、`eks:DescribeCluster` の対象、Secrets Manager の対象）を読んでから承認します。同じ URL の OIDC プロバイダーが既にあるアカウントでは、`create_github_oidc_provider = false` にします。
+確認：成功すると `Apply complete! Resources: N added, 0 changed, 0 destroyed.` が表示されるはずです（未検証）。実行前に `plan` の差分を記録します。作成後は `terraform output cd_role_arn` などの値を、GitHub の Variables に設定します。削除するときは、CD 用ロールの access entry がクラスターに依存するため、Phase 6 より先にこの Terraform を削除します。
 
 ### GitHub 側
 
@@ -367,66 +574,167 @@ CD は、このリポジトリの CI が成功していることを確認しま�
 
 6 の同期が済んで `Synced` の状態から始めます（push できない場合は、実験 A・B を省略し、その理由を記録します）。
 
+目的：意図的に手動で変更して（drift を作って）、Web の replica 数を Git の値（2）から 5 に変えます。
+
 ```text
 kubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=5
+```
+
+確認：`deployment.apps/workboard-web scaled` と表示されます。
+
+目的：Argo CD が drift を検出して `OutOfSync` と表示するかを確認します。
+
+```text
 kubectl --context kind-workboard-phase8 -n argocd get application workboard
+```
+
+確認：Argo CD が `OutOfSync` と表示するまでの時間、Diff に出る項目（画面で確認）を記録します。表示されなければ、少し待って再実行するか、画面の「Refresh」を押します。
+
+目的：手動変更が Deployment に反映されている様子を確認します。
+
+```text
 kubectl --context kind-workboard-phase8 -n workboard get deployment workboard-web
 ```
 
-Argo CD が `OutOfSync` と表示するまでの時間、Diff に出る項目、Web の Pod 数を記録します。次に、手動同期で Git の値に戻し、さらに自動修復を一時的に有効にして、同じ手動変更が戻るまでの時間を記録します。
+確認：Web の Pod 数が 5 になっていることを記録します。次に、手動同期（「6」の手順）で Git の値に戻します。
+
+目的：自動修復（`selfHeal`）を一時的に有効にします。手動同期で戻したあと、同じ手動変更が自動で戻るまでの時間を記録するための準備です。
 
 **Windows (PowerShell):**
 
 ```powershell
 kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type merge -p '{\"spec\":{\"syncPolicy\":{\"automated\":{\"selfHeal\":true}}}}'
-kubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=4
-kubectl --context kind-workboard-phase8 -n workboard get deployment workboard-web
-kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type json -p '[{\"op\":\"remove\",\"path\":\"/spec/syncPolicy\"}]'
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type merge -p '{"spec":{"syncPolicy":{"automated":{"selfHeal":true}}}}'
+```
+
+確認：`application.argoproj.io/workboard patched` と表示されます。
+
+目的：再び手動で変更して（replica 数を 4 にして）、自動修復が戻すかを観察します。
+
+**Windows (PowerShell):**
+
+```powershell
 kubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=4
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+kubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=4
+```
+
+確認：`deployment.apps/workboard-web scaled` と表示されます。戻るまでの時間を記録します。
+
+目的：Web の replica 数が Git の値に戻ったかを確認します。
+
+**Windows (PowerShell):**
+
+```powershell
 kubectl --context kind-workboard-phase8 -n workboard get deployment workboard-web
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+kubectl --context kind-workboard-phase8 -n workboard get deployment workboard-web
+```
+
+確認：自動修復が働いていれば、しばらくして Git の値（2）に戻ります。戻るまで繰り返し実行して、時間を記録します。
+
+目的：自動修復を無効に戻します（`syncPolicy` を削除して手動同期に戻します）。実験が終わったら必ず実行します。
+
+**Windows (PowerShell):**
+
+```powershell
+kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type json -p '[{\"op\":\"remove\",\"path\":\"/spec/syncPolicy\"}]'
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type json -p '[{"op":"remove","path":"/spec/syncPolicy"}]'
 ```
 
-最後の `patch` で、自動修復を無効に戻します。
+確認：`application.argoproj.io/workboard patched` と表示されます。
 
 ### B. 不正なコミットを同期し、revert で戻す
 
 `kustomize/overlays/kind/kustomization.yaml` の `workboard-web` の `newTag` を、存在しないタグに書き換えてコミットし、push します。Argo CD で更新を取り込み、同期します。
 
+目的：不正なコミット（存在しない `newTag`）を同期した後の、Web の Pod の状態を確認します。
+
 ```text
 kubectl --context kind-workboard-phase8 -n workboard get pods -l app=workboard-web
+```
+
+確認：新しい Pod が起動できず（イメージが存在しない）、旧 Pod が残るかを観察します。
+
+目的：Web の Deployment の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase8 -n workboard get deployment workboard-web
+```
+
+確認：`READY` と `UP-TO-DATE` の数を記録します。
+
+目的：Argo CD の同期状態と健全性を確認します。
+
+```text
 kubectl --context kind-workboard-phase8 -n argocd get application workboard
 ```
 
-Argo CD の同期状態（`SYNC STATUS`）と健全性（`HEALTH STATUS`）がそれぞれどう変わるか、旧 Pod が残るか、`watch-http` の応答が変わるかを記録します。次に、そのコミットを `git revert` で打ち消して push し、同期して、状態が戻るまでを記録します。`kubectl rollout undo` と何が違うか（何が元の状態を決めるか）も考えます。
+確認：`SYNC STATUS`（同期状態）と `HEALTH STATUS`（健全性）がそれぞれどう変わるか、旧 Pod が残るか、`watch-http` の応答が変わるかを記録します。次に、そのコミットを `git revert` で打ち消して push し、同期して、状態が戻るまでを記録します。`kubectl rollout undo` と何が違うか（何が元の状態を決めるか）も考えます。
 
 ### C. DB のロックで遅延を作り、p95 の変化を観察する
 
 テーブルに排他ロックを 20 秒間保持するセッションを、別のターミナルで実行します。DB は動き続け、Readiness は成功したままです。ロック中も `watch-http` を流します。
 
+目的：テーブル `tasks` に排他ロックを 20 秒間保持するセッションを実行します（ロック中も `watch-http` を流します）。**別のターミナルで実行します。** 対象は `workboard-phase8` の DB のダミーデータだけです。
+
 ```text
 kubectl --context kind-workboard-phase8 -n workboard exec workboard-postgres-0 -- sh -c "psql -U workboard -d workboard -c 'BEGIN; LOCK TABLE tasks IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(20); COMMIT;'"
 ```
 
-`watch-http` の応答時間とステータス、Prometheus の p95 とリクエスト率、`/api/v1/tasks` の `route` ごとの値を記録します。Web（Nginx）が返したエラーが API のメトリクスに現れるか、現れないかも確認します。
+確認：20 秒間このコマンドが終わらず、その後 `COMMIT` が返って終了します。`watch-http` の応答時間とステータス、Prometheus の p95 とリクエスト率、`/api/v1/tasks` の `route` ごとの値を記録します。Web（Nginx）が返したエラーが API のメトリクスに現れるか、現れないかも確認します。
 
 ### D. DB を止めてエラー率を上げる
 
+目的：DB（StatefulSet）の replica を 0 にして、DB を止めます。ダミーデータ専用の `workboard-phase8` だけが対象です。
+
 ```text
 kubectl --context kind-workboard-phase8 -n workboard scale statefulset/workboard-postgres --replicas=0
+```
+
+確認：`statefulset.apps/workboard-postgres scaled` と表示されます。DB への接続ができなくなります。
+
+目的：DB を止めた間の API Pod の状態を確認します。
+
+```text
 kubectl --context kind-workboard-phase8 -n workboard get pods -l app=workboard-api
+```
+
+確認：Pod 数や Readiness の変化を見ます。`kubectl` の出力とメトリクスのどちらで分かるかも比べます。`watch-http` のステータスの順序、Prometheus のエラー率、`status` ごとの件数も記録します。メトリクスに現れる 5xx と、利用者が見た 5xx が一致するか確認します。
+
+目的：DB の replica を 1 に戻して、DB を復旧します。
+
+```text
 kubectl --context kind-workboard-phase8 -n workboard scale statefulset/workboard-postgres --replicas=1
+```
+
+確認：`statefulset.apps/workboard-postgres scaled` と表示されます。
+
+目的：DB の StatefulSet が準備完了になるまで待ちます。
+
+```text
 kubectl --context kind-workboard-phase8 -n workboard rollout status statefulset/workboard-postgres --timeout=120s
 ```
 
-`watch-http` のステータスの順序、Prometheus のエラー率、`status` ごとの件数を記録します。メトリクスに現れる 5xx と、利用者が見た 5xx が一致するか確認します。Pod 数や Readiness の変化は、`kubectl` の出力とメトリクスのどちらで分かるかも比べます。
+確認：`partitioned roll out complete` や `statefulset rolling update complete` のような完了メッセージが出て終了します。120 秒で終わらなければタイムアウトします。
 
 ## 失敗時に確認すること
 
@@ -455,11 +763,13 @@ kubectl --context kind-workboard-phase8 -n workboard rollout status statefulset/
 
 `workboard-phase8` を削除すると、PVC/PV に保存した DB のデータ、Prometheus のデータ、Argo CD の状態も失われます。クラスター名と消えるデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。他のクラスターは対象外です。
 
+目的：**クラスター `workboard-phase8` を削除します（元に戻せません）。** PVC/PV に保存した DB のデータ、Prometheus のデータ、Argo CD の状態も失われます。クラスター名と消えるデータを確認し、削除してよいと明示的に判断した場合だけ実行します。他のクラスターは対象外です。
+
 ```text
 kind delete cluster --name workboard-phase8
 ```
 
-削除後、専用 kubeconfig `.kube/workboard-phase8.yaml` が残っていれば対象を確認してそのファイルだけ削除します。`db.env` は残して再利用できます。**クラスター（PVC）を残したまま `db.env` を消さないでください。** 構築スクリプトが別のパスワードを生成し、初期化済みの DB と一致しなくなります。
+確認：削除したクラスターが一覧から消えます（`kind get clusters` で確認できます）。削除後、専用 kubeconfig `.kube/workboard-phase8.yaml` が残っていれば対象を確認してそのファイルだけ削除します。`db.env` は残して再利用できます。**クラスター（PVC）を残したまま `db.env` を消さないでください。** 構築スクリプトが別のパスワードを生成し、初期化済みの DB と一致しなくなります。
 
 AWS 側に作った資源（CD 用ロール、OIDC プロバイダー、ECR のイメージ）の削除は、「AWS のコストを確認し、不要な環境を削除する」の順序に従い、対象と影響を確認してから学習者が行います。
 

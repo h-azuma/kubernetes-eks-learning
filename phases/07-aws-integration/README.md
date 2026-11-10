@@ -56,13 +56,31 @@
 
 ### 1. 適用前に読む（AWS に接続しない）
 
+目的：Terraform ファイルの書式が整っているかを確認します（AWS には接続しません）。
+
 ```text
 terraform -chdir=phases/07-aws-integration/terraform fmt -check -recursive
+```
+
+確認：出力が何もなければ書式は整っています。整っていないファイルがあると、そのファイル名が表示されます。
+
+目的：provider を取得して、次の `validate` を実行できる状態にします。`-backend=false` を付けているので、state の保存先には接続しません。
+
+```text
 terraform -chdir=phases/07-aws-integration/terraform init -backend=false
+```
+
+確認：`Terraform has been successfully initialized!` が表示されれば成功です。provider を取得するだけで、AWS には接続しません。
+
+目的：Terraform の文法と引数の整合を確認します。
+
+```text
 terraform -chdir=phases/07-aws-integration/terraform validate
 ```
 
-`eks` overlay を読むため、Secret の入力ファイルにダミーを用意します（Git に入れません）。実際の値は、後で `write-db-secret` が Secrets Manager から作ります。
+確認：`Success! The configuration is valid.` が表示されれば成功です。`validate` は AWS 側で作成できるかは確認しません。
+
+目的：`eks` overlay を読むため、Secret の入力ファイル `secrets/db.env` にダミー値だけの例ファイルをコピーします（Git に入れません）。実際の値は、後で `write-db-secret` が Secrets Manager から作ります。
 
 **Windows (PowerShell):**
 
@@ -76,29 +94,59 @@ Copy-Item phases/07-aws-integration/kustomize/overlays/eks/secrets/db.env.exampl
 cp phases/07-aws-integration/kustomize/overlays/eks/secrets/db.env.example phases/07-aws-integration/kustomize/overlays/eks/secrets/db.env
 ```
 
+確認：エラーが出なければ `db.env` が作られています。ダミーのままでは RDS に接続できないため、「5. イメージ、Secret、アプリを用意する」で `write-db-secret` が実際のパスワードで上書きします。
+
+目的：`eks` overlay を生成して、適用前の最終形を読みます。
+
 ```text
 kubectl kustomize phases/07-aws-integration/kustomize/overlays/eks
 ```
 
-観察する点は以下です。
-
-- Postgres の Deployment/StatefulSet がなく、`POSTGRES_HOST` がダミーの RDS エンドポイント、`PGSSLMODE=require` が ConfigMap にあること。
-- Ingress の `ingressClassName: alb` と `inbound-cidrs`（ダミー `203.0.113.10/32`）、health check パス。
-- イメージ参照がダミーのアカウント ID であること（`deploy` が実際の値に置き換えます）。
+確認：次の 3 点を見ます。(1) Postgres の Deployment/StatefulSet がなく、`POSTGRES_HOST` がダミーの RDS エンドポイント、`PGSSLMODE=require` が ConfigMap にあること。(2) Ingress の `ingressClassName: alb` と `inbound-cidrs`（ダミー `203.0.113.10/32`）、health check パス。(3) イメージ参照がダミーのアカウント ID であること（`deploy` が実際の値に置き換えます）。
 
 ### 2. Helm chart の中身を読む（AWS に接続しない）
 
 Controller を入れる前に、固定した版（chart 3.6.2）の chart と values を確認し、生成されるマニフェストを `helm template` で書き出して読みます。`.tools/` は Git 管理外です。
 
+目的：AWS が公開している Helm chart のリポジトリ `eks` を、Helm に登録します（AWS には接続しません。インターネット上のリポジトリを登録するだけです）。
+
 ```text
 helm repo add eks https://aws.github.io/eks-charts
+```
+
+確認：`"eks" has been added to your repositories` のような表示が出るはずです。すでに登録済みなら、その旨が表示されます。
+
+目的：登録したリポジトリ `eks` の chart 一覧を取得し直します。
+
+```text
 helm repo update eks
+```
+
+確認：`Successfully got an update from the "eks" chart repository` のような表示が出るはずです。
+
+目的：固定した版（chart 3.6.2）の chart の情報（名前、版、出どころ）を読みます。
+
+```text
 helm show chart eks/aws-load-balancer-controller --version 3.6.2
+```
+
+確認：`version: 3.6.2` が表示されることを見ます。署名・出典・版（chart の取得元、`helm show chart` の情報、IAM ポリシーの出典。`ADR-0014` は課題の後で読む）を書き出す材料にします。
+
+目的：chart の既定の values（設定できる値と既定値）を読みます。
+
+```text
 helm show values eks/aws-load-balancer-controller --version 3.6.2
+```
+
+確認：長い YAML が表示されます。イメージの出所とタグ、replica 数、`serviceAccount` などの設定項目を探します。この Phase で上書きする値は `helm/aws-load-balancer-controller-values.yaml` にあります。
+
+目的：Controller の生成物（マニフェスト）を `helm template` で `.tools/lbc-rendered` に書き出して読みます。クラスターには何も適用しません。`.tools/` は Git 管理外です。
+
+```text
 helm template aws-load-balancer-controller eks/aws-load-balancer-controller --version 3.6.2 --namespace kube-system --values phases/07-aws-integration/helm/aws-load-balancer-controller-values.yaml --set clusterName=workboard-learning --set region=ap-northeast-1 --set vpcId=vpc-0123456789abcdef0 --include-crds --output-dir .tools/lbc-rendered
 ```
 
-`.tools/lbc-rendered/` の生成物を読み、次の点を自分の言葉で書き出します。
+確認：エラーなく終了し、`.tools/lbc-rendered/` に生成物ができるはずです。生成物を読み、次の点を自分の言葉で書き出します。
 
 - 生成されるリソースの種類と数（ServiceAccount、ClusterRole/Role と Binding、Deployment、Service、Secret、Mutating/ValidatingWebhookConfiguration、IngressClass、CRD）。
 - RBAC: 何のリソースに、どの操作を許しているか（Secret の扱いも含む）。
@@ -112,6 +160,8 @@ helm template aws-load-balancer-controller eks/aws-load-balancer-controller --ve
 
 `terraform.tfvars.example` をコピーして `terraform.tfvars` を作り、自分の値に置き換えます。`allowed_account_id` が必須です。`terraform.tfvars` は Git に入れません。
 
+目的：`terraform.tfvars.example` をコピーして、自分の値を入れる `terraform.tfvars` を作ります（`terraform.tfvars` は Git に入れません）。
+
 **Windows (PowerShell):**
 
 ```powershell
@@ -124,126 +174,335 @@ Copy-Item phases/07-aws-integration/terraform/terraform.tfvars.example phases/07
 cp phases/07-aws-integration/terraform/terraform.tfvars.example phases/07-aws-integration/terraform/terraform.tfvars
 ```
 
+確認：エラーが出なければ `terraform.tfvars` が作られています。エディターで `allowed_account_id` を自分の値に置き換えます。
+
+目的：AWS に何が作られるか（差分）を読みます。AWS の認証情報が必要ですが、`plan` は何も作成しません。
+
 ```text
 terraform -chdir=phases/07-aws-integration/terraform plan
 ```
 
-作成されるリソース（RDS、DB subnet group、セキュリティグループ、パラメータグループ、IAM ロールとポリシー、Pod Identity Agent アドオン、association）の種類と数、料金が発生するもの（RDS）を記録します。RDS の `master_user_secret` は Terraform の state にパスワードを持たないこと、`plan` に値が出ないことを確認します。承認した後にだけ `apply` します。
+確認：出力の末尾に `Plan: N to add, 0 to change, 0 to destroy.` のような件数が表示されるはずです（未検証）。作成されるリソース（RDS、DB subnet group、セキュリティグループ、パラメータグループ、IAM ロールとポリシー、Pod Identity Agent アドオン、association）の種類と数、料金が発生するもの（RDS）を記録します。RDS の `master_user_secret` は Terraform の state にパスワードを持たないこと、`plan` に値が出ないことを確認します。承認した後にだけ `apply` します。
+
+目的：**費用が発生します（RDS）。** `plan` で読んだ差分を AWS に実際に作成します。開始条件を満たし、明示的に判断した後にだけ自分の手で実行します。
 
 ```text
 terraform -chdir=phases/07-aws-integration/terraform apply
 ```
 
-RDS の作成には十数分かかります。
+確認：RDS の作成には十数分かかります。成功すると `Apply complete! Resources: N added, 0 changed, 0 destroyed.` が表示されるはずです（未検証）。実行前に、`plan` の差分と見積もりの金額を記録し、削除する日時を決めておきます。作成した時点から課金が続くため、学習を終えたら [aws-cleanup.md](aws-cleanup.md) の順序で削除します。
 
 ### 4. kubeconfig を作り、Controller を導入する
+
+目的：このシェルだけで Phase 7 用の kubeconfig と region を使う設定にして、以降の `kubectl`・`helm`・AWS CLI がこの Phase の設定を向くようにします。
 
 **Windows (PowerShell):**
 
 ```powershell
 . .\phases\07-aws-integration\scripts\env.ps1
-powershell -NoProfile -File phases/07-aws-integration/scripts/update-kubeconfig.ps1
-powershell -NoProfile -File phases/07-aws-integration/scripts/install-lbc.ps1
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 source phases/07-aws-integration/scripts/env.sh
+```
+
+確認：画面に出力は想定していません。エラーが出なければ設定済みです。Bash で `source` を付けずに実行した場合は、`source` で読み込み直してください。
+
+目的：EKS クラスターに接続するための kubeconfig を作ります。AWS を操作するスクリプトなので、対象のアカウント・region・クラスター名が表示され、`yes` の入力を求められます。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File phases/07-aws-integration/scripts/update-kubeconfig.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 bash phases/07-aws-integration/scripts/update-kubeconfig.sh
+```
+
+確認：表示された内容が承認した環境であることを確かめてから `yes` を入力します。エラーなく終了すれば kubeconfig が作られているはずです（未検証）。
+
+目的：固定した chart の版と values で、AWS Load Balancer Controller を `helm upgrade --install` で導入します。AWS を操作するスクリプトなので、`yes` の入力を求められます。Controller は Ingress から ALB を作る仕組みで、ここでは ALB はまだ作られません。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File phases/07-aws-integration/scripts/install-lbc.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 bash phases/07-aws-integration/scripts/install-lbc.sh
 ```
 
-`install-lbc` は、固定した chart の版と values で `helm upgrade --install` を実行します。
+確認：エラーなく終了するはずです（未検証）。導入後の状態は、次の `helm list` 以降で確認します。
+
+目的：導入した release の一覧を確認します。
 
 ```text
 helm list -n kube-system
+```
+
+確認：`aws-load-balancer-controller` の `STATUS` が `deployed` のはずです（未検証）。
+
+目的：release の履歴（revision）を確認します。
+
+```text
 helm history aws-load-balancer-controller -n kube-system
+```
+
+確認：導入直後は revision 1 だけが表示されるはずです（未検証）。この後の `upgrade` と `rollback` で revision が増える様子と比べます。
+
+目的：release に実際に使われている values を確認します。
+
+```text
 helm get values aws-load-balancer-controller -n kube-system
+```
+
+確認：`clusterName`、`region`、`vpcId` などが、`install-lbc` で渡した値になっているはずです（未検証）。
+
+目的：release が実際にクラスターへ入れたマニフェストを確認します。
+
+```text
 helm get manifest aws-load-balancer-controller -n kube-system
+```
+
+確認：`helm template` の出力（「2. Helm chart の中身を読む」）と比べ、生成物が同じ構成であることを確かめます（未検証）。
+
+目的：Controller の Deployment と Pod を確認します。
+
+```text
 kubectl -n kube-system get deployment,pods -l app.kubernetes.io/name=aws-load-balancer-controller
+```
+
+確認：Controller の Pod が `Ready` のはずです（未検証）。
+
+目的：Pod Identity Agent（Controller に AWS の権限を渡す仕組み）が各ノードで動いているかを確認します。
+
+```text
 kubectl -n kube-system get daemonset eks-pod-identity-agent
+```
+
+確認：DaemonSet の `DESIRED` と `READY` がノード数と同じのはずです（未検証）。
+
+目的：Controller が作った IngressClass を確認します。
+
+```text
 kubectl get ingressclass
+```
+
+確認：`alb` が表示されるはずです（未検証）。
+
+目的：Controller のログを確認します。
+
+```text
 kubectl -n kube-system logs deployment/aws-load-balancer-controller --tail=20
 ```
 
-期待結果は、release が `deployed`、Controller の Pod が Ready、Pod Identity Agent が各ノードで動いていること、ログに AWS の認可エラーが出ていないことです。`helm get manifest` と手順 2 の `helm template` の出力を比べます。
+確認：AWS の認可エラーが出ていないことを見ます（未検証）。認可エラーが出ている場合は、「失敗時に確認すること」を見ます。
 
-release の状態と rollback の単位を観察します（Controller の replica 数を変えて戻します）。
+目的：release の状態と rollback の単位を観察するため、Controller の replica 数を 1 に変えます（観察が終わったら rollback で戻します）。chart のリポジトリ `eks`（手順 2 で登録）が必要です。
 
 ```text
 helm upgrade aws-load-balancer-controller eks/aws-load-balancer-controller --version 3.6.2 -n kube-system --reuse-values --set replicaCount=1
-helm history aws-load-balancer-controller -n kube-system
-helm rollback aws-load-balancer-controller 1 -n kube-system
+```
+
+確認：`Release "aws-load-balancer-controller" has been upgraded.` のように表示されるはずです（未検証）。
+
+目的：upgrade 後の履歴を確認します。
+
+```text
 helm history aws-load-balancer-controller -n kube-system
 ```
 
-revision が増え、rollback も新しい revision になることを確認します。rollback の対象が何か（Kubernetes のリソースか、Helm が管理する release の状態か、AWS 側のリソースは含まれるか）を書き出します。
+確認：revision が増えていることを見ます（未検証）。
+
+目的：revision 1 に戻します。
+
+```text
+helm rollback aws-load-balancer-controller 1 -n kube-system
+```
+
+確認：`Rollback was a success!` のように表示されるはずです（未検証）。
+
+目的：rollback 後の履歴を確認します。
+
+```text
+helm history aws-load-balancer-controller -n kube-system
+```
+
+確認：rollback も新しい revision になることを確認します（未検証）。rollback の対象が何か（Kubernetes のリソースか、Helm が管理する release の状態か、AWS 側のリソースは含まれるか）を書き出します。
 
 ### 5. イメージ、Secret、アプリを用意する
+
+目的：API/Web のイメージをビルドして ECR に push します。AWS を操作するスクリプトなので、対象のアカウント・region が表示され、`yes` の入力を求められます。
 
 **Windows (PowerShell):**
 
 ```powershell
 powershell -NoProfile -File phases/07-aws-integration/scripts/push-images.ps1
-powershell -NoProfile -File phases/07-aws-integration/scripts/write-db-secret.ps1
-$env:WORKBOARD_ALLOWED_CIDR = '198.51.100.7/32'
-powershell -NoProfile -File phases/07-aws-integration/scripts/deploy.ps1
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 bash phases/07-aws-integration/scripts/push-images.sh
+```
+
+確認：表示された内容を確かめてから `yes` を入力します。エラーなく終了し、ECR に `phase7` タグのイメージができるはずです（未検証）。
+
+目的：Secrets Manager から RDS のパスワードを取り出し、Git 管理外の `secrets/db.env` に書き出します（値は表示しません）。AWS を操作するスクリプトなので、`yes` の入力を求められます。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File phases/07-aws-integration/scripts/write-db-secret.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 bash phases/07-aws-integration/scripts/write-db-secret.sh
+```
+
+確認：エラーなく終了し、`DB パスワードを書き出しました（値は表示しません）` のようなメッセージが出るはずです（未検証）。手順 1 で置いたダミーの `db.env` は、この実際の値で置き換わります。
+
+目的：ALB に接続できる範囲（許可 CIDR）を、このシェルの環境変数に設定します。`198.51.100.7/32` はダミーなので、**自分のグローバル IP の /32** に置き換えます（`0.0.0.0/0` は `deploy` が拒否します）。
+
+**Windows (PowerShell):**
+
+```powershell
+$env:WORKBOARD_ALLOWED_CIDR = '198.51.100.7/32'
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 export WORKBOARD_ALLOWED_CIDR=198.51.100.7/32
+```
+
+確認：画面に出力は想定していません。エラーが出なければ設定済みです。ダミーの値のままにしないでください。
+
+目的：**ALB が作られ、費用が発生します。** ECR のレジストリ、RDS のエンドポイント、許可 CIDR を実際の値に置き換えて EKS に適用し、migration Job の完了と API/Web の準備完了を待ちます。Ingress が適用されると Controller が ALB を作ります。開始条件を満たし、明示的に判断した後にだけ実行します。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File phases/07-aws-integration/scripts/deploy.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 bash phases/07-aws-integration/scripts/deploy.sh
 ```
 
-`198.51.100.7/32` はダミーです。**自分のグローバル IP の /32** に置き換えます（`0.0.0.0/0` は `deploy` が拒否します）。`write-db-secret` は Secrets Manager から RDS のパスワードを取り出して Git 管理外の `secrets/db.env` に書きます（値は表示しません）。`deploy` は ECR のレジストリ、RDS のエンドポイント、許可 CIDR を実際の値に置き換えて適用し、migration Job の完了と API/Web の準備完了を待ちます。
+確認：エラーなく終了するはずです（未検証）。ALB は検証が終わったらすぐに [aws-cleanup.md](aws-cleanup.md) の順序で削除します。恒常的な公開はしません。
+
+目的：`workboard` namespace の Pod・Deployment・Service・Job・Ingress を確認します。
 
 ```text
 kubectl -n workboard get pods,deploy,svc,job,ingress
+```
+
+確認：期待結果は、Postgres の Pod がなく、migration Job が `Completed`、API/Web が `Ready` で、Ingress が表示されていることです（未検証）。
+
+目的：API が接続している DB の接続先と SSL モードを確認します。パスワードは表示しません。
+
+```text
 kubectl -n workboard exec deploy/workboard-api -- printenv POSTGRES_HOST PGSSLMODE
+```
+
+確認：`POSTGRES_HOST` が RDS のエンドポイント、`PGSSLMODE` が `require` のはずです（未検証）。
+
+目的：migration Job のログを読み、RDS にスキーマが作られたことを確認します。
+
+```text
 kubectl -n workboard logs job/workboard-migrate -c migrate
 ```
 
-期待結果は、Postgres の Pod がなく、API の `POSTGRES_HOST` が RDS のエンドポイントで、migration Job が Completed、API/Web が Ready であることです。パスワードの値は表示しません。
+確認：エラーなく終了したログが出るはずです（未検証）。パスワードの値は表示されません。
 
 ### 6. ALB と公開範囲を確認する
 
+目的：Ingress の `ADDRESS`（ALB の DNS 名）を確認します。
+
 ```text
 kubectl -n workboard get ingress
+```
+
+確認：`ADDRESS` に ALB の DNS 名が表示されるまで数分かかります。表示された DNS 名を、以降の `<ALB の DNS 名>` に使います（未検証）。
+
+目的：Ingress の詳細とイベントを読みます。
+
+```text
 kubectl -n workboard describe ingress workboard
+```
+
+確認：`Events` に、ALB の作成成功が出ているはずです。エラーが出ている場合は「失敗時に確認すること」を見ます（未検証）。
+
+目的：Controller のログで、ALB 作成の様子と認可エラーの有無を確認します。
+
+```text
 kubectl -n kube-system logs deployment/aws-load-balancer-controller --tail=20
 ```
 
-ADDRESS に ALB の DNS 名が表示されるまで数分かかります。許可した IP のネットワークから確認します。
+確認：認可エラーが出ていないことを見ます（未検証）。
+
+目的：許可した IP のネットワークから、ALB 経由で API の Readiness を確認します。`<ALB の DNS 名>` は上の `ADDRESS` に置き換えます。
 
 **Windows (PowerShell):**
 
 ```powershell
 curl.exe -i http://<ALB の DNS 名>/health/ready
-curl.exe -s http://<ALB の DNS 名>/api/v1/tasks
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 curl -i http://<ALB の DNS 名>/health/ready
+```
+
+確認：`HTTP/1.1 200` など成功のステータス行が表示されるはずです（未検証）。
+
+目的：許可した IP のネットワークから、ALB 経由でタスクの一覧を読みます。
+
+**Windows (PowerShell):**
+
+```powershell
+curl.exe -s http://<ALB の DNS 名>/api/v1/tasks
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 curl -s http://<ALB の DNS 名>/api/v1/tasks
 ```
 
-ブラウザーで `http://<ALB の DNS 名>/` を開き、ダミータスクを作って再読み込みしても残ることを確認します。許可していない別のネットワーク（例: スマートフォンの回線）から同じ URL へ接続し、拒否される（接続できない、またはタイムアウト）ことを確認します。ALB のセキュリティグループに `inbound-cidrs` の CIDR だけが許可されていること、ターゲットグループが healthy であることを AWS のコンソールまたは CLI で確認します。検証が終わったら、すぐに [aws-cleanup.md](aws-cleanup.md) の順序で ALB を削除します。恒常的な公開はしません。
+確認：JSON が表示されるはずです（未検証）。ブラウザーで `http://<ALB の DNS 名>/` を開き、ダミータスクを作って再読み込みしても残ることを確認します。許可していない別のネットワーク（例: スマートフォンの回線）から同じ URL へ接続し、拒否される（接続できない、またはタイムアウト）ことを確認します。ALB のセキュリティグループに `inbound-cidrs` の CIDR だけが許可されていること、ターゲットグループが healthy であることを AWS のコンソールまたは CLI で確認します。検証が終わったら、すぐに [aws-cleanup.md](aws-cleanup.md) の順序で ALB を削除します。恒常的な公開はしません。
 
 ### 7. RDS を観察する
 
+目的：RDS の状態を AWS CLI で読みます（読み取りだけで、何も変更しません）。
+
 ```text
 aws rds describe-db-instances --db-instance-identifier workboard-learning-db --region ap-northeast-1 --query "DBInstances[0].[DBInstanceStatus,MultiAZ,StorageEncrypted,PubliclyAccessible,BackupRetentionPeriod,LatestRestorableTime]"
+```
+
+確認：`[DBInstanceStatus, MultiAZ, StorageEncrypted, PubliclyAccessible, BackupRetentionPeriod, LatestRestorableTime]` の順に 6 つの値が表示されるはずです（未検証）。private（`PubliclyAccessible` が false）、暗号化、バックアップ保持、最新の復元可能時刻（PITR の目安）を確認します。RDS のセキュリティグループが、クラスターのセキュリティグループからの 5432 だけを許可していることも確認します。パスワードの値は表示も記録もしません。
+
+目的：Terraform の出力値（RDS のエンドポイントなど）を読みます。
+
+```text
 terraform -chdir=phases/07-aws-integration/terraform output
 ```
 
-private（`PubliclyAccessible` が false）、暗号化、バックアップ保持、最新の復元可能時刻（PITR の目安）を確認します。RDS のセキュリティグループが、クラスターのセキュリティグループからの 5432 だけを許可していることも確認します。パスワードの値は表示も記録もしません。
+確認：`db_endpoint_address` や `db_master_secret_arn` などの出力が表示されるはずです（未検証）。パスワードの値そのものは出力に含まれません。
 
 ### 8. データ移行・バックアップ・復元の設計
 
@@ -257,12 +516,21 @@ private（`PubliclyAccessible` が false）、暗号化、バックアップ保�
 
 承認した AWS 環境で、この Phase の RDS だけを対象にします。再起動中は DB に接続できません（Single-AZ のため、数分間）。
 
+目的：**RDS が再起動し、数分間 DB に接続できなくなります（Single-AZ のため）。** 承認した AWS 環境で、この Phase の RDS だけを対象にします。
+
 ```text
 aws rds reboot-db-instance --db-instance-identifier workboard-learning-db --region ap-northeast-1
+```
+
+確認：再起動の開始を示す内容が表示されるはずです（未検証）。復旧までの時間は、次の `get pods -w` と、別のターミナルでの確認で記録します。
+
+目的：API の Pod の状態の変化を見続けます。**別のターミナルで実行したままにします**（再起動の前から始めておくと変化を逃しません）。観察が終わったら `Ctrl+C` で止めます。
+
+```text
 kubectl -n workboard get pods -w
 ```
 
-別のターミナルで、`kubectl -n workboard get endpoints workboard-api` と、ALB の URL への `curl`（`/`、`/health/ready`、`/api/v1/tasks`）を繰り返し、API の Pod の Ready、Service のエンドポイント、ALB の応答がどう変わるか、復旧までの時間を記録します。ALB の health check が `/`（Web 自身）である理由を、この結果から説明します。
+確認：API の Pod の Ready が変わる様子を観察します（未検証）。別のターミナルで、`kubectl -n workboard get endpoints workboard-api` と、ALB の URL への `curl`（`/`、`/health/ready`、`/api/v1/tasks`）を繰り返し、API の Pod の Ready、Service のエンドポイント、ALB の応答がどう変わるか、復旧までの時間を記録します。ALB の health check が `/`（Web 自身）である理由を、この結果から説明します。
 
 ### B. Pod Identity の association を外して、Controller の権限を観察する
 
@@ -274,12 +542,21 @@ Ingress の `inbound-cidrs` を別の値に変えて `apply` し、ALB に接続
 
 ### D. Ingress を削除して、ALB が消えることを確認する
 
+目的：**ALB が削除されます。** Ingress を削除して、Controller が ALB を片付けるかを観察します。実行前に、削除する Ingress が `workboard` namespace のものであることを確かめます。
+
 ```text
 kubectl -n workboard delete ingress workboard
+```
+
+確認：`ingress.networking.k8s.io "workboard" deleted` と表示されるはずです（未検証）。Ingress を再作成すれば ALB は再び作られ、その分の費用がかかります。
+
+目的：リージョン内の ALB を一覧して、削除した Ingress の ALB が消えたかを確認します（読み取りだけです）。
+
+```text
 aws elbv2 describe-load-balancers --region ap-northeast-1
 ```
 
-Controller が動いている間に Ingress を消すと ALB も消えること、Controller を先に消すと ALB が残ることを、削除の順序の根拠として整理します（Controller を先に消す実験は、残存資産と課金が発生するため行いません）。
+確認：しばらく待つと、この Phase の ALB が一覧から消えているはずです（未検証）。Controller が動いている間に Ingress を消すと ALB も消えること、Controller を先に消すと ALB が残ることを、削除の順序の根拠として整理します（Controller を先に消す実験は、残存資産と課金が発生するため行いません）。
 
 ## 発展課題（任意。アプリは実装しない）
 

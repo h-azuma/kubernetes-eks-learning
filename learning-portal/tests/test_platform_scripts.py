@@ -38,6 +38,8 @@ class PracticeSectionTests(unittest.TestCase):
 
 説明です。
 
+目的：文字を表示します。
+
 **Windows (PowerShell):**
 
 ```powershell
@@ -50,11 +52,17 @@ Write-Output a
 echo a
 ```
 
-期待結果です。
+確認：a と表示されます。
+
+補足です。
+
+目的：共通のコマンドを実行します。
 
 ```text
 common command
 ```
+
+確認：何も表示されません。
 """
 
     def test_powershell_and_bash_blocks_become_one_step(self):
@@ -62,9 +70,20 @@ common command
         self.assertEqual(len(sections), 1)
         first, second = sections[0]["steps"]
         self.assertEqual((first["command"], first["linuxCommand"]), ("Write-Output a", "echo a"))
-        self.assertEqual(first["expected"], "期待結果です。")
+        self.assertEqual(first["description"], "文字を表示します。")
+        self.assertEqual(first["expected"], "a と表示されます。\n\n補足です。")
+        self.assertEqual((second["description"], second["expected"]), ("共通のコマンドを実行します。", "何も表示されません。"))
         self.assertNotIn("linuxCommand", second)
+        self.assertEqual(sections[0]["body"], "説明です。")
         self.assertNotIn("PowerShell", sections[0]["body"])
+
+    def test_missing_purpose_or_check_is_rejected(self):
+        for readme in (
+            "## 検証\n\n確認：なし。\n\n```text\nls\n```\n",
+            "## 検証\n\n目的：一覧します。\n\n```text\nls\n```\n\n補足だけ。\n",
+        ):
+            with self.assertRaises(ValueError):
+                practice_sections(readme, "practice", ["検証"])
 
 
 if __name__ == "__main__":

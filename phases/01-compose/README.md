@@ -30,7 +30,9 @@ Lab 00 完了、Git、Docker と Compose、Linux コンテナエンジンが必�
 
 Docker の Linux コンテナエンジン（Windows / macOS は Docker Desktop、Linux は Docker Engine または Docker Desktop）を起動し、リポジトリ直下で操作します。Docker エンジンは `docker info` で確認できます。kind・Terraform は今回不要です。
 
-初回だけ `.env.example` を `.env` にコピーします。すでに `.env` がある場合は上書きせず、そのファイルを使ってください。
+各コマンドは 1 つずつ実行します。コマンドの直前の「目的」で何のために打つかを、直後の「確認」で出力のどこを見るかを確かめてから、次のコマンドへ進みます。
+
+目的：初回だけ `.env.example` を `.env` にコピーします。すでに `.env` がある場合は上書きせず、そのファイルを使ってください（このコマンドは `.env` が無い場合だけコピーします）。
 
 **Windows (PowerShell):**
 
@@ -44,31 +46,59 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 if [ ! -f .env ]; then cp .env.example .env; fi
 ```
 
-`.env` をエディターで開き、`POSTGRES_PASSWORD` の例をローカル専用の値に変更します。このファイルは Git の対象外です。DB 初期化後に値を変更しても既存 DB のパスワードは自動で変わりません。
+確認：エラーが出なければよく、画面への出力は想定していません。`.env` ができたら、エディターで開いて `POSTGRES_PASSWORD` の例をローカル専用の値に変更します。このファイルは Git の対象外です。DB 初期化後に値を変更しても既存 DB のパスワードは自動で変わりません。
 
-共通の起動コマンド:
+目的：共通の起動コマンドです。イメージをビルドし、Web・API・DB・migration をバックグラウンドで起動します。初回はイメージの取得・ビルドに時間がかかります。
 
 ```text
 docker compose -f phases/01-compose/compose.yaml up --build -d
+```
+
+確認：エラーなく終了することを見ます。起動後の状態は次のコマンドで確認します。
+
+目的：コンテナの状態を、終了したものも含めて一覧します。
+
+```text
 docker compose -f phases/01-compose/compose.yaml ps -a
 ```
 
-`migrate` は正常終了（Exited 0）、`api` と `db` は healthy、`web` は Up が期待結果です。初回はイメージの取得・ビルドに時間がかかります。[WorkBoard](http://localhost:8080) を開くとタスクを作成・編集・削除できます。[API ドキュメント](http://localhost:8080/docs) も利用できます。
+確認：`migrate` は正常終了（Exited 0）、`api` と `db` は healthy、`web` は Up が期待結果です。[WorkBoard](http://localhost:8080) を開くとタスクを作成・編集・削除できます。[API ドキュメント](http://localhost:8080/docs) も利用できます。
 
 ## 検証コマンド・期待結果
 
 ### 1. 設定と起動を確認する
 
+目的：Compose ファイルの設定が正しいかを、展開後の認証値を表示せずに確認します（`--quiet`）。
+
 ```text
 docker compose -f phases/01-compose/compose.yaml config --quiet
+```
+
+確認：何も表示されず、エラーが出なければ設定は正常です。引数なしの `config` は展開後の認証値も表示するため、ログ共有時は `--quiet` を使います。
+
+目的：イメージをビルドして起動します。DB→migration→API→Web の順に準備されます。
+
+```text
 docker compose -f phases/01-compose/compose.yaml up --build -d
+```
+
+確認：エラーなく終了することを見ます。
+
+目的：各コンテナの状態を確認します。
+
+```text
 docker compose -f phases/01-compose/compose.yaml ps -a
+```
+
+確認：`migrate` は Exited 0（正常終了）、API・DB が healthy、Web が Up になるまで待ちます。
+
+目的：migration と API のログの末尾 30 行を読み、起動に失敗していないか確認します。
+
+```text
 docker compose -f phases/01-compose/compose.yaml logs --tail=30 migrate api
 ```
 
-設定確認が成功し、DB→migration→API→Web の順に準備されます。`migrate` の Exited 0 は正常終了です。API・DB が healthy、Web が Up になるまで待ちます。
-
-失敗時は `.env` の有無、Docker Desktop の起動、8080 番の重複、`logs` を確認します。初期化後に `.env` の認証値を変えると DB 内の値と不一致になります。volume 削除で解決しようとせず、まず元の設定を確認してください。引数なしの `config` は展開後の認証値も表示するため、ログ共有時は `--quiet` を使います。
+確認：`migrate` と `api` のログにエラーがないことを見ます。失敗時は `.env` の有無、Docker Desktop の起動、8080 番の重複、`logs` を確認します。初期化後に `.env` の認証値を変えると DB 内の値と不一致になります。volume 削除で解決しようとせず、まず元の設定を確認してください。
 
 ### 2. 画面で CRUD と再読込を試す
 
@@ -84,104 +114,213 @@ docker compose -f phases/01-compose/compose.yaml logs --tail=30 migrate api
 
 ### 3. API と health を確認する
 
+目的：API の Liveness（プロセスが生きているか）を確認します。
+
 **Windows (PowerShell):**
 
 ```powershell
 Invoke-RestMethod http://localhost:8080/health/live
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+curl -i http://localhost:8080/health/live
+```
+
+確認：正常時は 200 です。PowerShell の `Invoke-RestMethod` はステータス行を表示せず、2xx 以外ではエラーになるため、本文が返りエラーが出なければ正常です。Bash の `curl -i` は先頭のステータス行が `200` であることを見ます。
+
+目的：API の Readiness（DB へ接続できて通信を受けられるか）を確認します。
+
+**Windows (PowerShell):**
+
+```powershell
 Invoke-RestMethod http://localhost:8080/health/ready
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+curl -i http://localhost:8080/health/ready
+```
+
+確認：正常時は 200 です。確認の見方は live と同じです（PowerShell は本文が返りエラーが出ないこと、Bash はステータス行が `200`）。
+
+目的：タスク一覧の API が返ることを確認します。
+
+**Windows (PowerShell):**
+
+```powershell
 Invoke-RestMethod http://localhost:8080/api/v1/tasks
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
-curl -i http://localhost:8080/health/live
-curl -i http://localhost:8080/health/ready
 curl -i http://localhost:8080/api/v1/tasks
 ```
 
-正常時は両 health が 200、一覧には画面で作成したタスクが出ます。
+確認：画面で作成したタスクが一覧に出ることを見ます（Bash はステータス行が `200` であることも見ます）。
 
 ### 4. 再起動・公開ポート・データ保持を観察する
 
+目的：API コンテナだけを再起動します。DB は止めないため、データは残るはずです。
+
 ```text
 docker compose -f phases/01-compose/compose.yaml restart api
+```
+
+確認：エラーなく終了することを見ます。
+
+目的：コンテナの状態を確認します。
+
+```text
 docker compose -f phases/01-compose/compose.yaml ps
+```
+
+確認：API が healthy に戻るまで待ちます。戻ったらブラウザーを再読込し、タスクが残っていることを確認します。
+
+目的：Web コンテナの 80 番ポートがホストのどこへ公開されているかを確認します。
+
+```text
 docker compose -f phases/01-compose/compose.yaml port web 80
+```
+
+確認：公開先が `127.0.0.1:8080` であることを見ます。
+
+目的：API コンテナの 8000 番ポートがホストへ公開されているかを確認します。
+
+```text
 docker compose -f phases/01-compose/compose.yaml port api 8000
+```
+
+確認：公開されていないため、公開先が表示されません。「公開されていない」というエラーは期待どおりです。
+
+目的：DB コンテナの 5432 番ポートがホストへ公開されているかを確認します。
+
+```text
 docker compose -f phases/01-compose/compose.yaml port db 5432
 ```
 
-API が healthy に戻ったらブラウザーを再読込します。タスクは残ります。Web の公開先は `127.0.0.1:8080`、API/DB は公開ポートなし（port コマンドの「公開されていない」というエラーは期待どおり）です。
+確認：API と同様に、公開されていないというエラーが期待どおりです。ホストから見える入口は Web の `127.0.0.1:8080` だけです。
 
-通常の `down` と再起動も試せます:
+通常の `down` と再起動も試せます。
+
+目的：コンテナとネットワークを停止・削除します。`-v` を付けないため学習用 volume は残り、データは保持されます。
 
 ```text
 docker compose -f phases/01-compose/compose.yaml down
+```
+
+確認：エラーなく終了することを見ます。コンテナは消えますが、volume は残ります。
+
+目的：コンテナを再作成して、バックグラウンドで起動し直します。
+
+```text
 docker compose -f phases/01-compose/compose.yaml up -d
 ```
 
-同じタスクが残ることを確認してから、画面の「削除」で検証用タスクを削除してください。
+確認：エラーなく起動することを見ます。ブラウザーを再読込し、同じタスクが残ることを確認してから、画面の「削除」で検証用タスクを削除してください。
 
 ### 5. 自動 API テストを実行する
+
+目的：専用の PostgreSQL（`workboard_test`）を使って、API の自動テストを実行します。学習用 DB のデータは削除しません。
 
 ```text
 docker compose -f phases/01-compose/compose.yaml --profile test run --build --rm tests
 ```
 
-テストは `workboard_test` という専用 PostgreSQL の tmpfs 上で migration・CRUD・入力エラー・health を確認します。終了コード 0、全テスト成功が期待結果です。学習用 DB のデータを削除しません。
+確認：終了コード 0、全テスト成功が期待結果です。テストは `workboard_test` という専用 PostgreSQL の tmpfs 上で migration・CRUD・入力エラー・health を確認します。
 
 ## 故障実験: DB 停止と復旧
 
 学習用環境を利用中のほかの人がいないことを確認してから実行します。
 
+目的：DB コンテナを停止して、DB 障害を再現します。停止してもデータは消えません（volume は残ります）。
+
 ```text
 docker compose -f phases/01-compose/compose.yaml stop db
 ```
 
-次の URL のステータスを確認します。PowerShell の `curl` は別コマンドの別名になり得るため `curl.exe` を明記します。
+確認：エラーなく終了することを見ます。API の DB 接続は数秒で失敗し、画面でのタスク操作も失敗し得ます。API のコンテナが unhealthy になっても、Compose が自動で再起動するとは限りません。
+
+目的：Liveness のステータスを確認します。PowerShell の `curl` は別コマンドの別名になり得るため `curl.exe` を明記します。
 
 **Windows (PowerShell):**
 
 ```powershell
 curl.exe -i http://localhost:8080/health/live
-curl.exe -i http://localhost:8080/health/ready
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 curl -i http://localhost:8080/health/live
+```
+
+確認：ステータス行が `200` であることを見ます（API のプロセスは生きています）。
+
+目的：Readiness のステータスを確認します。
+
+**Windows (PowerShell):**
+
+```powershell
+curl.exe -i http://localhost:8080/health/ready
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 curl -i http://localhost:8080/health/ready
 ```
 
-期待結果は Liveness 200、Readiness 503。API の DB 接続は数秒で失敗し、画面でのタスク操作も失敗し得ます。API のコンテナが unhealthy になっても、Compose が自動で再起動するとは限りません。
+確認：ステータス行が `503` であることを見ます。Liveness 200・Readiness 503 の差が期待結果です。
 
-次で復旧し、Readiness が 200 に戻るまで待ちます。
+目的：DB コンテナを起動して復旧します。
 
 ```text
 docker compose -f phases/01-compose/compose.yaml start db
+```
+
+確認：エラーなく終了することを見ます。
+
+目的：コンテナの状態を確認し、Readiness が 200 に戻るまで待ちます。
+
+```text
 docker compose -f phases/01-compose/compose.yaml ps
 ```
 
-API を再起動しなくても接続が回復することと、既存タスクが残ることを観察します。**volume を消す実験は今回は行いません。** 実施する場合は、対象の volume と失われるデータを確認し、削除の明示承認後に別途行います。
+確認：DB と API が healthy に戻ることを見ます。API を再起動しなくても接続が回復することと、既存タスクが残ることを観察します。**volume を消す実験は今回は行いません。** 実施する場合は、対象の volume と失われるデータを確認し、削除の明示承認後に別途行います。
 
 ## UI の型チェックとビルド（任意）
 
 ホスト側で UI の型チェック・ビルドを行う場合は、リポジトリ直下で実行します。
 
+目的：UI の依存パッケージを `package-lock.json` どおりに導入します（`app/web/node_modules` が作られます）。
+
 ```text
 npm --prefix app/web ci
+```
+
+確認：エラーなく終了することを見ます。
+
+目的：UI の型チェックとビルドを行います。
+
+```text
 npm --prefix app/web run build
 ```
 
+確認：TypeScript の型エラーがなく、Vite のビルドが成功することを見ます。
+
 ## 後片付け
+
+目的：テスト用のプロファイルも含めて、コンテナとネットワークを停止・削除します。
 
 ```text
 docker compose -f phases/01-compose/compose.yaml --profile test down
 ```
 
-学習用 volume は残ります。`-v` は付けません。テスト DB は tmpfs のためコンテナ削除で消えます。
+確認：エラーなく終了することを見ます。学習用 volume は残ります。`-v` は付けません。テスト DB は tmpfs のためコンテナ削除で消えます。
 
 ## 完了条件
 

@@ -39,14 +39,6 @@ def memo_labels(text):
     return [label.strip() for label in re.findall(r"^- (.+)$", heading_body(text, "学習メモ"), re.M)]
 
 
-def command_from(text, prefix):
-    for block in re.findall(r"```[^\n]*\n(.*?)```", text, re.S):
-        for line in block.splitlines():
-            if line.startswith(prefix):
-                return line
-    raise ValueError(f"ラボ内にコマンドがありません: {prefix}")
-
-
 SHELL_LABEL = re.compile(r"^\*\*(?:Windows \(PowerShell\)|Linux / macOS / WSL \(Bash\)):\*\*[ \t]*$", re.M)
 
 
@@ -56,8 +48,21 @@ def plain_text(markdown):
     return text.replace("**", "").strip()
 
 
+PURPOSE, CHECK = "目的：", "確認："
+PRACTICE_HEADINGS = ["前提条件", "検証コマンド・期待結果", "検証方法・期待結果", "故障実験", "失敗時に確認すること", "Linux / macOS / WSL での前提", "後片付け"]
+
+
+def paragraphs(markdown):
+    return [text for text in re.split(r"\n\s*\n", plain_text(markdown)) if text]
+
+
 def practice_sections(text, prefix, allowed_headings):
-    """指定した手順節だけを抽出する。回答・メモ・検証記録は対象外。"""
+    """指定した手順節だけを抽出する。回答・メモ・検証記録は対象外。
+
+    コマンド（PowerShell/Bash の対は1つ）ごとに、直前の「目的：」段落を description、直後から次の
+    「目的：」までの段落を expected にする。どちらかが無ければ ValueError。最初の手順より前の
+    「目的：」以外の段落は節の本文、手順間にある「確認：」以外の段落は直前手順の expected に含める。
+    """
     sections = []
     heading_pattern = r"^## ([^\n]+)\n(.*?)(?=^## |\Z)"
     for heading, content in re.findall(heading_pattern, text, re.M | re.S):
@@ -68,34 +73,48 @@ def practice_sections(text, prefix, allowed_headings):
         parts = re.split(r"^### ([^\n]+)\n", content, flags=re.M)
         introduction = parts[0].strip()
         subsections = [(heading, introduction)] if len(parts) == 1 else [
-            (subheading, introduction + "\n\n" + subcontent)
-            for subheading, subcontent in zip(parts[1::2], parts[2::2])
+            (subheading, (introduction + "\n\n" if number == 0 else "") + subcontent)
+            for number, (subheading, subcontent) in enumerate(zip(parts[1::2], parts[2::2]))
         ]
         for subheading, subcontent in subsections:
             blocks = list(re.finditer(r"```([^\n]*)\n(.*?)```", subcontent, re.S))
-            body = plain_text(subcontent[:blocks[0].start()] if blocks else subcontent)
-            steps = []
+            units = []
             index = 0
             while index < len(blocks):
                 block = blocks[index]
-                language = block.group(1).strip()
-                pair = None
-                if language == "powershell" and index + 1 < len(blocks) and blocks[index + 1].group(1).strip() == "bash":
-                    between = plain_text(subcontent[block.end():blocks[index + 1].start()])
-                    pair = blocks[index + 1] if not between else None
-                last = pair or block
-                next_start = blocks[index + (2 if pair else 1)].start() if index + (2 if pair else 1) < len(blocks) else len(subcontent)
-                label = "Windows / Linux" if pair else {"powershell": "PowerShell", "bash": "Bash", "text": "共通コマンド"}.get(language, "コマンド")
+                following = blocks[index + 1] if index + 1 < len(blocks) else None
+                is_pair = (
+                    block.group(1).strip() == "powershell" and following is not None
+                    and following.group(1).strip() == "bash"
+                    and not plain_text(subcontent[block.end():following.start()])
+                )
+                units.append((block, following if is_pair else None))
+                index += 2 if is_pair else 1
+            starts = [0] + [(pair or block).end() for block, pair in units]
+            ends = [block.start() for block, _ in units] + [len(subcontent)]
+            gaps = [paragraphs(subcontent[start:end]) for start, end in zip(starts, ends)]
+            body = gaps[0][:-1] if units else gaps[0]
+            steps = []
+            for number, (block, pair) in enumerate(units):
+                where = f"{subheading} 手順 {number + 1}"
+                if not gaps[number] or not gaps[number][-1].startswith(PURPOSE):
+                    raise ValueError(f"{where}: 直前に「{PURPOSE}」の段落がありません")
+                after = gaps[number + 1] if number + 1 == len(units) else gaps[number + 1][:-1]
+                if not any(text.startswith(CHECK) for text in after):
+                    raise ValueError(f"{where}: 直後に「{CHECK}」の段落がありません")
+                label = "Windows / Linux" if pair else {"powershell": "PowerShell", "bash": "Bash", "text": "共通コマンド"}.get(block.group(1).strip(), "コマンド")
                 item = dict(
-                    title=f"手順 {len(steps) + 1} / {label}",
-                    description="リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+                    title=f"手順 {number + 1} / {label}",
+                    description=gaps[number][-1].removeprefix(PURPOSE),
                     command=block.group(2).strip(),
-                    expected=plain_text(subcontent[last.end():next_start]),
+                    expected="\n\n".join(text.removeprefix(CHECK) for text in after),
                 )
                 if pair:
                     item["linuxCommand"] = pair.group(2).strip()
+                elif block.group(1).strip() in ("powershell", "bash"):
+                    item["shell"] = block.group(1).strip()
                 steps.append(item)
-                index += 2 if pair else 1
+            body = "\n\n".join(body)
             entry = dict(
                 id=f"{prefix}-{len(sections) + 1}", kind="practice",
                 title=f"実習: {subheading}", body=body,
@@ -111,19 +130,10 @@ def concept(term, description, analogy):
     return {"term": term, "description": description, "analogy": analogy}
 
 
-def section(key, title, body, callout=None, steps=None):
+def section(key, title, body, callout=None):
     result = {"id": key, "title": title, "body": body}
     if callout:
         result["callout"] = callout
-    if steps:
-        result["steps"] = steps
-    return result
-
-
-def step(title, description, command, expected, linux_command=None):
-    result = dict(title=title, description=description, command=command, expected=expected)
-    if linux_command:
-        result["linuxCommand"] = linux_command
     return result
 
 
@@ -364,10 +374,7 @@ def build():
                 text, "practice-setup",
                 ["Phase 1: Compose 上で WorkBoard を起動する"],
             ))
-        sections.extend(practice_sections(
-            text, "practice-lab",
-            ["前提条件", "検証コマンド・期待結果", "検証方法・期待結果", "故障実験", "失敗時に確認すること", "Linux / macOS / WSL での前提", "後片付け"],
-        ))
+        sections.extend(practice_sections(text, "practice-lab", PRACTICE_HEADINGS))
         assert len(prompts) == len(rubrics), (pid, prompts)
         phases.append(dict(
             id=pid, slug=slug, title=title, subtitle=subtitle, level=level,
@@ -385,7 +392,7 @@ def build():
             concept("一次設計書", "方針の原本を一か所で管理し、入口の文書から参照します。", "地図の正本と案内板"),
         ], [
             section("start", "二つの画面を使い分ける", "このポータルは学習・回答用の localhost:8765、WorkBoardはタスク操作用の localhost:8080 です。ポータルを開いてもWorkBoardやkindを起動・停止しません。\n\n各章で解説と図を読み、実際の観察は学習メモへ、設計判断は設計課題へ書きます。採点への送信では、何を実行し何を省略したかも伝えてください。"),
-            section("check", "導入と稼働を分けて確認する", "バージョンが返ればCLIの実行は確認できます。Dockerエンジンの起動、DB接続、WSL連携や互換性まで確認できたとは限りません。", steps=[step("シェルで確認", "リポジトリ直下で実行する参照のみの処理です。", command_from(lab_texts[0], "powershell -NoProfile"), "Gitが確認できれば終了コード0。他ツールの未導入も区別して表示。", command_from(lab_texts[0], "bash tools/preflight.sh"))]),
+            section("check", "導入済みと稼働中は別", "バージョンが返ればCLIの実行は確認できます。Dockerエンジンの起動、DB接続、WSL連携や互換性まで確認できたとは限りません。\n\n→ 実習「検証コマンド・期待結果」で確かめます。"),
             section("record", "履歴と秘密情報を分ける", ".gitignoreは新たな追跡を避けるための設定です。追跡済みの秘密情報や過去の履歴は消しません。\n\n学習メモには観察・コマンド・期待との差を書きます。設計課題には自分の理由と代替案を書き、結果だけの『できた』から一歩進めます。", "補助解説はポータル独自の編集です。設計課題と学習メモの項目名は既存ラボを正本にしています。"),
         ], phase_diagram(0))
 
@@ -395,11 +402,9 @@ def build():
             concept("Readiness", "リクエストを受け付けられるかを確認します。プロセス生存とは別の条件です。", "開店していることと注文に応えられることの違い"),
             concept("named volume", "DBコンテナを取り替えても残せる保存先です。volume自体を削除すれば保存データは失われます。", "部屋を引っ越しても持っていける収納箱"),
         ], [
-            section("flow", "入口はWebだけ", "ブラウザーは8080番のNginxへ接続します。静的画面を受け取り、/api/の呼び出しはNginxがAPIへ転送します。APIはDBサービス名でPostgreSQLへ接続します。\n\nAPI/DBのポートをホストに公開しなくても、同じComposeネットワーク内では通信できます。コンテナを分ける主な理由は個別の更新・再起動・管理です。分割だけで冗長化が完成するわけではありません。"),
-            section("startup", "起動順と準備完了は別", "DB→migration→API→Webの順に準備します。service_healthyはDBの準備条件、service_completed_successfullyはmigrationの正常終了を待つ条件です。\n\nこれは起動時の条件です。稼働中のDB障害では接続の回復やエラー処理が別途必要になります。migrationはテーブルを用意する一回の処理で、長時間リクエストを受けるAPIとは役割が異なります。", "現在kindを使用して8080を転送中なら、そのまま学習できます。Composeを重ねて起動せず、初回構築はこの章の実習を開いて進めてください。", [
-                step("Composeの状態を読む", "既存コンテナを変更せず一覧を確認します。停止済みなら何も動いていないことが観察結果です。", command_from(lab_texts[1], "docker compose -f phases/01-compose/compose.yaml ps -a"), "稼働中ならAPI/DBがhealthy、WebがUp、migrationがExited 0。"),
-                step("準備の経過を読む", "migrationとAPIのログを参照します。", command_from(lab_texts[1], "docker compose -f phases/01-compose/compose.yaml logs"), "migrationの正常終了とAPIの起動が分かる。")]),
-            section("health", "healthと保存先を観察する", "LivenessはAPIの生存、ReadinessはDBへの接続を確認します。DB停止時にliveまで失敗させると、APIを再起動してもDB障害は直らず、再起動が連鎖し得ます。\n\nAPIやブラウザーを再起動してもタスクが残るのは、DBがnamed volumeに保存するためです。現在8080がkindを向いていれば、同じURLでも保存先はkindのDBです。異なる環境のデータを同じものと考えないでください。", steps=[step("現在の8080のhealthを見る", "返答の意味に加え、今の8080がComposeかkindかをメモします。", command_from(lab_texts[1], "Invoke-RestMethod http://localhost:8080/health/ready"), "DBに接続できれば正常応答。未起動なら接続失敗も観察結果。", command_from(lab_texts[1], "curl -i http://localhost:8080/health/ready"))]),
+            section("flow", "入口はWebだけ", "ブラウザーは8080番のNginxへ接続します。静的画面を受け取り、/api/の呼び出しはNginxがAPIへ転送します。APIはDBサービス名でPostgreSQLへ接続します。\n\nAPI/DBのポートをホストに公開しなくても、同じComposeネットワーク内では通信できます。コンテナを分ける主な理由は個別の更新・再起動・管理です。分割だけで冗長化が完成するわけではありません。\n\n→ 実習「1. 設定と起動を確認する」「3. API と health を確認する」で確かめます。"),
+            section("startup", "起動順と準備完了は別", "DB→migration→API→Webの順に準備します。service_healthyはDBの準備条件、service_completed_successfullyはmigrationの正常終了を待つ条件です。\n\nこれは起動時の条件です。稼働中のDB障害では接続の回復やエラー処理が別途必要になります。migrationはテーブルを用意する一回の処理で、長時間リクエストを受けるAPIとは役割が異なります。\n\n→ 実習「1. 設定と起動を確認する」で確かめます。", "現在kindを使用して8080を転送中なら、そのまま学習できます。Composeを重ねて起動せず、初回構築はこの章の実習を開いて進めてください。"),
+            section("health", "Liveness・Readiness と保存先", "LivenessはAPIの生存、ReadinessはDBへの接続を確認します。DB停止時にliveまで失敗させると、APIを再起動してもDB障害は直らず、再起動が連鎖し得ます。\n\nAPIやブラウザーを再起動してもタスクが残るのは、DBがnamed volumeに保存するためです。現在8080がkindを向いていれば、同じURLでも保存先はkindのDBです。異なる環境のデータを同じものと考えないでください。\n\n→ 実習「3. API と health を確認する」「4. 再起動・公開ポート・データ保持を観察する」で確かめます。"),
         ], phase_diagram(1))
 
     add(2, "kubernetes", "望ましい状態を保つ", "kind・Pod・Service・一時DB", "local", 60,
@@ -410,12 +415,9 @@ def build():
             concept("emptyDir", "Podに属する一時volumeです。コンテナの再起動を越えて残っても、Pod削除では消えます。", "同じ作業室の中だけで使える棚"),
             concept("JobとinitContainer", "Jobは完了を目指す一回の処理です。通常のinitContainerは同じPodの主コンテナより前に正常終了する必要があります。", "独立した準備作業と、開店前の室内準備の違い"),
         ], [
-            section("observe", "既存クラスターから読み始める", "この環境のPhase 2は構築済みです。読み取りコマンドからPod・ReplicaSet・Deployment・Serviceを見比べます。各コマンドは専用contextを明示し、別クラスターと混同しないようにします。\n\nkindのNodeもローカルDocker内で動きます。Nodeの中にPod、その中にコンテナという階層です。アプリのコンテナイメージはComposeと共通でも、起動・維持する主体が変わります。", "以下は手動実行用です。ポータルはコマンドを自動実行しません。既存Podの削除や再構築はここでは必要ありません。", [
-                step("現在のシェルへ専用設定", "PowerShellの先頭のドットとスペース、Bashのsourceは、現在のシェルへ設定を読み込む指定です。", command_from(lab_texts[2], ". .\\phases\\02-kind-basics\\scripts\\env.ps1"), "現在のシェルだけで専用KUBECONFIGと.toolsが使える。", command_from(lab_texts[2], "source phases/02-kind-basics/scripts/env.sh")),
-                step("管理階層を一覧にする", "作られたPodと、それを維持するリソースを見ます。", command_from(lab_texts[2], "kubectl --context kind-workboard-lab -n workboard get pods,rs,deploy,svc"), "Web/API/DBが各1 Pod。Serviceが別リソースとして存在。"),
-                step("転送先を確かめる", "selectorとPod labelが一致する結果をEndpointSliceで追います。", command_from(lab_texts[2], "kubectl --context kind-workboard-lab -n workboard get endpointslices"), "API Serviceに対応するPodのアドレスが分かる。")]),
-            section("network", "Serviceとport-forwardを分ける", "Web→APIの通信はClusterIP Serviceを利用します。ServiceのselectorとPodのlabelが一致しないと、期待するPodへ転送されません。PodがRunningであることだけでは通信の成功を保証しません。\n\nsvc/workboard-webを指定したport-forwardはselectorで選んだWeb Podへの一時トンネルです。ClusterIPそのものを外部公開する操作ではありません。WorkBoardはlocalhost:8080、学習ポータルはlocalhost:8765です。既存の転送を止めず、そのまま8080を利用できます。", "port-forwardは常設の公開設定ではありません。接続しているWeb Podの置き換えでも終了する場合があります。"),
-            section("lifecycle", "再作成はデータ復元ではない", "API Podを削除するとDeploymentが新しいPodを補います。DB PodとそのemptyDirが残るのでタスクは保持されます。PodのUIDは変わりますが、IPは再利用される場合もあります。\n\nDB Podを削除すると、新しいemptyDirでDBが立ち上がります。タスクだけでなくスキーマも失われます。完了済みmigration JobはDB再作成だけでは再実行されません。Jobを再実行してスキーマを作り直しても、元データの復元にはなりません。", "DB削除実験はデータ消失を伴います。実行する場合はLab 02の条件・対象を確認し、失ってよいと判断してから別途行ってください。"),
+            section("observe", "kind の Node・Pod・Deployment の階層", "この環境のPhase 2は構築済みです。読み取りコマンドからPod・ReplicaSet・Deployment・Serviceを見比べます。各コマンドは専用contextを明示し、別クラスターと混同しないようにします。\n\nkindのNodeもローカルDocker内で動きます。Nodeの中にPod、その中にコンテナという階層です。アプリのコンテナイメージはComposeと共通でも、起動・維持する主体が変わります。\n\n→ 実習「2. 現在のシェルで対象を選び、状態を観察する」で確かめます。", "以下は手動実行用です。ポータルはコマンドを自動実行しません。既存Podの削除や再構築はここでは必要ありません。"),
+            section("network", "Serviceとport-forwardを分ける", "Web→APIの通信はClusterIP Serviceを利用します。ServiceのselectorとPodのlabelが一致しないと、期待するPodへ転送されません。PodがRunningであることだけでは通信の成功を保証しません。\n\nsvc/workboard-webを指定したport-forwardはselectorで選んだWeb Podへの一時トンネルです。ClusterIPそのものを外部公開する操作ではありません。WorkBoardはlocalhost:8080、学習ポータルはlocalhost:8765です。既存の転送を止めず、そのまま8080を利用できます。\n\n→ 実習「3. ブラウザーで同じアプリを使う」で確かめます。", "port-forwardは常設の公開設定ではありません。接続しているWeb Podの置き換えでも終了する場合があります。"),
+            section("lifecycle", "再作成はデータ復元ではない", "API Podを削除するとDeploymentが新しいPodを補います。DB PodとそのemptyDirが残るのでタスクは保持されます。PodのUIDは変わりますが、IPは再利用される場合もあります。\n\nDB Podを削除すると、新しいemptyDirでDBが立ち上がります。タスクだけでなくスキーマも失われます。完了済みmigration JobはDB再作成だけでは再実行されません。Jobを再実行してスキーマを作り直しても、元データの復元にはなりません。\n\n→ 実習「4. API Pod を削除し、自動復旧を観察する」「故障実験: 一時 DB とデータ消失」で確かめます。", "DB削除実験はデータ消失を伴います。実行する場合はLab 02の条件・対象を確認し、失ってよいと判断してから別途行ってください。"),
             section("init", "initContainerで解ける範囲", "現在のPhase 2はmigration Jobを使っており、API PodにinitContainerはありません。比較として、initContainerは同じPodの主コンテナより前に順番に実行され、準備を終えてから主コンテナを起動できます。\n\nAPI PodのinitContainerでDBを準備したとしても、別のDB Podだけが再作成されたとき、既存API PodのinitContainerは自動で再実行されません。DB障害中の接続回復やmigrationの再実行方針は、別に設計する必要があります。\n\n/health/readyのSELECT 1はDB接続を確かめます。テーブルの存在やmigration完了まで調べるものではないので、readyが200でもCRUDが失敗する場面があります。"),
         ], phase_diagram(2))
 
@@ -426,19 +428,13 @@ def build():
             concept("StatefulSet", "Podの名前と専用のPVCの対応を保つ仕組みです。バックアップやDBの高可用性までは扱いません。", "名前付きの担当席と専用保管庫"),
             concept("ConfigMap / Secret", "設定と秘密情報をイメージから分離します。Secretはbase64表現で暗号化ではなく、権限設計が必要です。", "共有手順書と配布先を絞った鍵"),
         ], [
-            section("kustomize", "適用前に生成結果を読む", "新しい専用クラスター workboard-phase3 で行います。Phase 2 の workboard-lab は変更しません。\n\nbaseにはNamespaceもConfigMap/Secretもありません。overlayがnamespace・イメージ・imagePullPolicyを変え、ConfigMapとSecretを生成します。生成された名前にはハッシュが付き、参照側の名前も書き換わります。", "kubectl kustomize は生成結果を表示するだけで、クラスターを変更しません。Secret の入力は Git 管理外の db.env です。", [
-                step("Phase 3 の接続先を選ぶ", "今のシェルだけで Phase 3 用の kubeconfig を使います。Phase 2 の env は従来どおり workboard-lab を指します。", command_from(lab_texts[3], ". .\\phases\\03-config-storage\\scripts\\env.ps1"), "KUBECONFIG が .kube/workboard-phase3.yaml になる。", command_from(lab_texts[3], "source phases/03-config-storage/scripts/env.sh")),
-                step("overlay の生成結果を読む", "ハッシュ付きの名前、namespace、イメージ、Secretのbase64を確認します。", command_from(lab_texts[3], "kubectl kustomize phases/03-config-storage/kustomize/overlays/kind"), "ConfigMap/Secret の名前にハッシュが付き、Deployment等の参照名も同じになる。")]),
-            section("persistence", "Podの寿命を越える保存先", "StatefulSetのPodは固定名で、volumeClaimTemplatesからPod専用のPVCが作られます。DB Podを削除しても同じPVCに接続するため、タスクが残ります。Lab 02のemptyDirとの違いを比べます。\n\nPVCを削除するとreclaim policyにより保存領域も消え、スキーマだけをmigrationで戻すことになります。PVはノード喪失を含めた可用性の保証ではありません。", steps=[
-                step("PVC と PV を観察する", "PVCがBoundか、PVがどのPVCに対応するかを確認します。", command_from(lab_texts[3], "kubectl --context kind-workboard-phase3 get pvc,pv -n workboard"), "PVCがBoundで、対応するPVが存在する。"),
-                step("DB Pod を作り直す", "ダミータスクを作成した後に実行し、名前・UID・PVC・データを比べます。", command_from(lab_texts[3], "kubectl --context kind-workboard-phase3 -n workboard delete pod workboard-postgres-0"), "Pod の UID は変わり、PVC は同じでタスクが残る。")]),
-            section("config", "設定変更とmigrationの再実行", "ConfigMap/Secretの内容を変えると名前のハッシュが変わり、Podテンプレートが更新されて新しいPodに置き換わります。旧いConfigMapは自動では消えません。\n\nJobのspec.templateは作成後に変更できないため、参照名が変わるとapplyできません。Alembicのupgrade headは何度実行しても安全なので、構築スクリプトは完了済みJobを削除して作り直します。", steps=[
-                step("構築スクリプトを再実行する", "既存のクラスターとPVCを維持したまま、Jobを作り直します。", command_from(lab_texts[3], "powershell -NoProfile -File phases/03-config-storage/scripts/up.ps1"), "終了コード0。タスクが残り、Jobが再びCompleteになる。", command_from(lab_texts[3], "bash phases/03-config-storage/scripts/up.sh"))]),
-            section("secret", "Secretが守る範囲を確かめる", "SecretはAPIに保存される設定オブジェクトで、base64表現は暗号化ではありません。読み取りやexecができる主体、保存時の保護、配布先をあわせて考えます。\n\nこのクラスターに保存時暗号化は設定していないため、その確認は未検証として記録します。", "実パスワードはリポジトリに含めません。構築スクリプトがローカル専用の値を db.env に生成します。", [
-                step("読める主体を確認する", "管理者とdefault ServiceAccountの違いを見ます。", command_from(lab_texts[3], "kubectl --context kind-workboard-phase3 -n workboard auth can-i get secrets --as"), "管理者は yes、default ServiceAccount は no。")]),
+            section("kustomize", "Kustomize の base と overlay", "新しい専用クラスター workboard-phase3 で行います。Phase 2 の workboard-lab は変更しません。\n\nbaseにはNamespaceもConfigMap/Secretもありません。overlayがnamespace・イメージ・imagePullPolicyを変え、ConfigMapとSecretを生成します。生成された名前にはハッシュが付き、参照側の名前も書き換わります。\n\n→ 実習「1. 適用前に生成結果を読む」で確かめます。", "kubectl kustomize は生成結果を表示するだけで、クラスターを変更しません。Secret の入力は Git 管理外の db.env です。"),
+            section("persistence", "Podの寿命を越える保存先", "StatefulSetのPodは固定名で、volumeClaimTemplatesからPod専用のPVCが作られます。DB Podを削除しても同じPVCに接続するため、タスクが残ります。Lab 02のemptyDirとの違いを比べます。\n\nPVCを削除するとreclaim policyにより保存領域も消え、スキーマだけをmigrationで戻すことになります。PVはノード喪失を含めた可用性の保証ではありません。\n\n→ 実習「3. リソースと保存先を観察する」「6. DB Pod を作り直してもデータが残るか」「B. PVC を削除するとデータはどうなるか」で確かめます。DB Pod を作り直す前に Pod の名前・UID と PVC を記録し、作り直した後と比べます。"),
+            section("config", "設定のハッシュと Job の作り直し", "ConfigMap/Secretの内容を変えると名前のハッシュが変わり、Podテンプレートが更新されて新しいPodに置き換わります。旧いConfigMapは自動では消えません。\n\nJobのspec.templateは作成後に変更できないため、参照名が変わるとapplyできません。Alembicのupgrade headは何度実行しても安全なので、構築スクリプトは完了済みJobを削除して作り直します。\n\n→ 実習「7. ConfigMap の変更が Pod にどう反映されるか」「8. 構築スクリプトの再実行（冪等性と migration の再実行）」で確かめます。"),
+            section("secret", "Secret が守る範囲と守らない範囲", "SecretはAPIに保存される設定オブジェクトで、base64表現は暗号化ではありません。読み取りやexecができる主体、保存時の保護、配布先をあわせて考えます。\n\nこのクラスターに保存時暗号化は設定していないため、その確認は未検証として記録します。\n\n→ 実習「4. ConfigMap と Secret の参照を確認する」「C. Secret の値だけを変えるとどうなるか」で確かめます。", "実パスワードはリポジトリに含めません。構築スクリプトがローカル専用の値を db.env に生成します。"),
         ], phase_diagram(3))
 
-    add_advanced(add, lab_texts)
+    add_advanced(add)
     validate(phases)
     return {"title": "WorkBoardで学ぶ Kubernetes / EKS", "phases": phases}
 
@@ -446,7 +442,7 @@ def build():
 AWS_NOTICE = "AWS の有料リソースを作るコマンドを含みます。ポータルはコマンドを実行しません。README の開始条件（明示的な承認・見積もり・予算通知・削除手順の確認）を満たしてから、自分のターミナルで実行してください。"
 
 
-def add_advanced(add, lab_texts):
+def add_advanced(add):
     add(4, "scaling", "増やす・更新する・耐える", "kind 3 ノード・Probe・HPA・PDB・配置制御", "local", 80,
         "レプリカ数だけでは語れない可用性と、計測に基づく調整を、3 ノードの kind で観察します。", [
             concept("Liveness と Readiness", "Liveness はプロセスが動いているかを見て、失敗すると再起動します。Readiness は今リクエストを受けられるかを見て、失敗すると Service の宛先から外れるだけです。", "店員が元気かの確認と、今レジに立てるかの確認"),
@@ -454,12 +450,8 @@ def add_advanced(add, lab_texts):
             concept("HPA", "使用率を requests で割った値が目標より高ければレプリカを増やします。上限は maxReplicas とノードの空きで決まり、ノード台数ではありません。", "混み具合を見てレジの台数を変える店長"),
             concept("PodDisruptionBudget", "drain などの自発的な退避で、最低何 Pod を残すかを決めます。ノード故障や Pod の直接削除は止められません。", "同時に休めるのは 1 人までという休暇ルール"),
         ], [
-            section("availability", "同じ場所に増やすだけでは足りない", "新しい専用クラスター workboard-phase4（control-plane 1 + worker 2）で行います。Phase 3 の workboard-phase3 は変更しません。WorkBoard は 8082 番です。\n\nAPI を 3 Pod にしても同じ Node に載っていれば、その Node の故障で全て止まり得ます。topologySpreadConstraints でノードに分散し、PDB で drain 中に残す数を決めます。DB は 1 Pod のままなので単一障害点として残ります。", "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。", [
-                step("専用クラスターを作る", "metrics-server の導入と準備完了待ちまで行います。既存のクラスターは変更しません。", command_from(lab_texts[4], "powershell -NoProfile -File phases/04-reliability-scaling/scripts/up.ps1"), "Node 3 台が Ready、API 3/3、Web 2/2、HPA が CPU 使用率を表示する。", command_from(lab_texts[4], "bash phases/04-reliability-scaling/scripts/up.sh")),
-                step("ノードを退避させる", "PDB が退避の速さをどう制限するかを観察します。", command_from(lab_texts[4], "kubectl --context kind-workboard-phase4 drain"), "PDB を満たす範囲で Pod が順に退避し、残りのノードで Ready になる。")]),
-            section("measurement", "測ってから数値を決める", "負荷生成 Pod で API に負荷をかけ、HPA が Pod を増やし、負荷を止めると戻る様子を記録します。Rolling Update と rollback では、更新中の HTTP 応答と残っている Pod 数を watch-http で同じ時間軸に並べます。\n\nport-forward は Service を指定しても 1 つの Web Pod に固定されます。その Pod が退避されると計測自体が途切れるため、結果を読むときに区別します。", steps=[
-                step("負荷をかけて HPA を観察する", "自分のクラスター内の API Service だけを対象にします。", command_from(lab_texts[4], "kubectl --context kind-workboard-phase4 apply -f phases/04-reliability-scaling/load/load-generator.yaml"), "CPU 使用率が目標を超えると API の Pod 数が増え、負荷停止後に戻る。"),
-                step("更新を巻き戻す", "不正なイメージで更新した後に戻します。", command_from(lab_texts[4], "kubectl --context kind-workboard-phase4 -n workboard rollout undo deployment/workboard-api"), "旧い ReplicaSet の Pod に戻り、更新中も Ready な Pod が残る。")]),
+            section("availability", "同じ場所に増やすだけでは足りない", "新しい専用クラスター workboard-phase4（control-plane 1 + worker 2）で行います。Phase 3 の workboard-phase3 は変更しません。WorkBoard は 8082 番です。\n\nAPI を 3 Pod にしても同じ Node に載っていれば、その Node の故障で全て止まり得ます。topologySpreadConstraints でノードに分散し、PDB で drain 中に残す数を決めます。DB は 1 Pod のままなので単一障害点として残ります。\n\n→ 実習「3. 配置・Probe・resources を観察する」「F. ノードを drain し、PDB の効果を見る」で確かめます。", "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。"),
+            section("measurement", "測ってから数値を決める", "負荷生成 Pod で API に負荷をかけ、HPA が Pod を増やし、負荷を止めると戻る様子を記録します。Rolling Update と rollback では、更新中の HTTP 応答と残っている Pod 数を watch-http で同じ時間軸に並べます。\n\nport-forward は Service を指定しても 1 つの Web Pod に固定されます。その Pod が退避されると計測自体が途切れるため、結果を読むときに区別します。\n\n→ 実習「4. metrics-server と使用量」「6. HTTP 応答を記録しながら Rolling Update を観察する」「D. CPU 負荷を与えて HPA を観察する」「E. 存在しないイメージで更新し、rollback する」で確かめます。"),
         ], phase_diagram(4))
 
     add(5, "security", "権限と通信を絞る", "kind + Calico・RBAC・NetworkPolicy・PSS・Runbook", "local", 80,
@@ -469,14 +461,8 @@ def add_advanced(add, lab_texts):
             concept("NetworkPolicy と CNI", "NetworkPolicy は通信の許可ルールを書く API オブジェクトで、実際に遮断するのは CNI です。対応しない CNI では作成できても効きません。", "規則書と、それを守らせる警備員"),
             concept("securityContext", "非 root、読み取り専用のルート、capability の削除、権限昇格の禁止で、侵入されたときの影響を小さくします。Secret を読める人の問題は別です。", "包丁は使えても倉庫の鍵は持たない料理人"),
         ], [
-            section("boundaries", "権限と通信は別の境界", "新しい専用クラスター workboard-phase5 は既定の CNI を外し、Calico を入れて NetworkPolicy を有効にします。WorkBoard は 8083 番です。\n\nRBAC で API 操作を制限しても、アプリの通信まで閉じるわけではありません。default deny に必要な通信だけを足し、許可した経路が通ることと、許可していない経路がタイムアウトすることの両方を確かめます。", "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。", [
-                step("専用クラスターを作る", "Calico の導入と Node の Ready 待ちまで行います。", command_from(lab_texts[5], "powershell -NoProfile -File phases/05-security-and-failure/scripts/up.ps1"), "Calico が Running、StatefulSet 1/1、Web/API 1/1、NetworkPolicy が作られる。", command_from(lab_texts[5], "bash phases/05-security-and-failure/scripts/up.sh")),
-                step("読み取り専用の主体を試す", "Secret を読めないことを確かめます。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 -n workboard auth can-i get secrets --as=system:serviceaccount:workboard:workboard-viewer"), "no が返る。"),
-                step("拒否される通信を試す", "Web から DB への直接接続は許可していません。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-web -- nc -zv -w 3 workboard-postgres 5432"), "接続がタイムアウトする。"),
-                step("違反する Pod を作る", "restricted に違反する Pod の作成が拒否されるかを見ます。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 -n workboard apply -f phases/05-security-and-failure/experiments/violating-pod.yaml"), "Forbidden と違反項目が表示される。")]),
-            section("diagnose", "症状から層を切り分ける", "イメージ取得失敗ならイベントとタグ、通信失敗なら名前解決・EndpointSlice・ポート・NetworkPolicy、権限不足なら主体と RoleBinding を追います。runbook.md に、症状・観察コマンド・原因・復旧・再発防止を障害ごとにまとめてあります。\n\nPod が Ready でも、kubelet の Probe は NetworkPolicy の影響を受けないため、アプリ間の通信は遮断され得ます。", steps=[
-                step("Service の転送先を見る", "selector の誤りでは転送先が空になります。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 -n workboard get endpointslices -l kubernetes.io/service-name=workboard-api"), "正常時は API Pod のアドレスが並ぶ。"),
-                step("memory 不足を再現する", "low-memory-limit の overlay で OOMKilled を起こします。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/experiments/low-memory-limit"), "Pod が OOMKilled（Exit 137）で再起動を繰り返す。")]),
+            section("boundaries", "権限と通信は別の境界", "新しい専用クラスター workboard-phase5 は既定の CNI を外し、Calico を入れて NetworkPolicy を有効にします。WorkBoard は 8083 番です。\n\nRBAC で API 操作を制限しても、アプリの通信まで閉じるわけではありません。default deny に必要な通信だけを足し、許可した経路が通ることと、許可していない経路がタイムアウトすることの両方を確かめます。\n\n→ 実習「4. Pod Security Standards の拒否を確かめる」「5. ServiceAccount と RBAC を確かめる」「6. NetworkPolicy の許可と拒否を確かめる」で確かめます。", "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。"),
+            section("diagnose", "症状から層を切り分ける", "イメージ取得失敗ならイベントとタグ、通信失敗なら名前解決・EndpointSlice・ポート・NetworkPolicy、権限不足なら主体と RoleBinding を追います。runbook.md に、症状・観察コマンド・原因・復旧・再発防止を障害ごとにまとめてあります。\n\nPod が Ready でも、kubelet の Probe は NetworkPolicy の影響を受けないため、アプリ間の通信は遮断され得ます。\n\n→ 実習「A. 存在しない image tag」「B. 誤った Service selector」「E. memory limit による OOMKilled」で確かめます。"),
         ], phase_diagram(5))
 
     add(6, "eks", "AWS上の責任を分ける", "Terraform・VPC・EKS・Managed Node Group・ECR", "cloud", 120,
@@ -486,11 +472,8 @@ def add_advanced(add, lab_texts):
             concept("access entries", "IAM の権限とは別に、Kubernetes 側の管理権限を IAM 主体へ明示的に付けます。", "建物に入る許可と金庫室に入る許可"),
             concept("plan と state", "plan は変更の予告、state は Terraform が管理している資産の台帳です。台帳を失うと削除もできなくなります。", "工事の見積書と設備の管理台帳"),
         ], [
-            section("responsibility", "まず標準 EKS で境界を見る", "Terraform は AWS provider のリソースで VPC・EKS・Managed Node Group・IAM・ECR を明示的に書いています。community module を使わないのは、構成要素を一つずつ読むためです。\n\nAPI endpoint は public のまま CIDR で制限し、0.0.0.0/0 は拒否します。WorkBoard は ECR のイメージで動かし、入口は port-forward（8086 番）だけです。DB は Phase 7 で RDS に移すため、ここでは使い捨ての Postgres です。", AWS_NOTICE, [
-                step("適用前に定義を検証する", "AWS に接続しない検証です。", command_from(lab_texts[6], "terraform -chdir=phases/06-eks-foundation/terraform validate"), "Success! と表示される。"),
-                step("差分を読む", "認証情報を使い AWS に問い合わせます（作成はしません）。作られるリソースと料金要因を記録します。", command_from(lab_texts[6], "terraform -chdir=phases/06-eks-foundation/terraform plan"), "VPC・subnet・NAT・EKS・ノードグループ・ECR などの追加が並ぶ。"),
-                step("ノードを観察する", "承認して apply した後に、ノードの配置と OS を確認します。", command_from(lab_texts[6], "kubectl get nodes -o wide"), "2 台のノードが private の IP で Ready になる。")]),
-            section("cost", "費用と後片付けを先に決める", "cost-estimate.md に region・稼働時間・台数・AZ 構成をそろえた見積もりの観点があります。料金は公式ページで確認し、確認できない値は要確認のまま残します。予算通知は課金停止の保証ではありません。\n\naws-cleanup.md に、destroy の順序と、ALB・ENI・EBS・NAT・EIP・ECR・ロググループなど残り得る資産の点検手順があります。", "削除は元に戻せません。aws-cleanup.md の手順で、対象と消えるデータを確認してから自分で実行してください。"),
+            section("responsibility", "まず標準 EKS で境界を見る", "Terraform は AWS provider のリソースで VPC・EKS・Managed Node Group・IAM・ECR を明示的に書いています。community module を使わないのは、構成要素を一つずつ読むためです。\n\nAPI endpoint は public のまま CIDR で制限し、0.0.0.0/0 は拒否します。WorkBoard は ECR のイメージで動かし、入口は port-forward（8086 番）だけです。DB は Phase 7 で RDS に移すため、ここでは使い捨ての Postgres です。\n\n→ 実習「1. 適用前に読む（AWS に接続しない）」「3. kubeconfig を作り、クラスターを観察する」「6. ネットワークと権限を観察する」で確かめます。", AWS_NOTICE),
+            section("cost", "費用と後片付けを先に決める", "cost-estimate.md に region・稼働時間・台数・AZ 構成をそろえた見積もりの観点があります。料金は公式ページで確認し、確認できない値は要確認のまま残します。予算通知は課金停止の保証ではありません。\n\naws-cleanup.md に、destroy の順序と、ALB・ENI・EBS・NAT・EIP・ECR・ロググループなど残り得る資産の点検手順があります。\n\n→ 実習「2. （承認後）`terraform plan` の差分を読む」「後片付け・再構築」で確かめます。", "削除は元に戻せません。aws-cleanup.md の手順で、対象と消えるデータを確認してから自分で実行してください。"),
         ], phase_diagram(6))
 
     add(7, "integration", "AWSサービスをつなぐ", "RDS・ALB・AWS Load Balancer Controller・Pod Identity・Helm", "cloud", 120,
@@ -500,12 +483,8 @@ def add_advanced(add, lab_texts):
             concept("Helm（chart の利用者として）", "helm template で中身を読んでから、release 単位で install・history・rollback します。", "組み立て説明書を先に読み、作業を番号付きで記録する"),
             concept("Ingress と ALB", "Ingress は API オブジェクトで、実際に ALB を作るのは Controller です。公開は許可した IP に限り、検証後は Ingress を先に消します。", "注文票と、それを受けて店を開ける店長"),
         ], [
-            section("path", "入口とDBをクラスターの外へ", "Phase 6 のクラスターが稼働していることが前提です。Phase 7 の Terraform は Phase 6 のファイルや state を読まず、クラスター名などの変数と data source で既存の環境を参照し、RDS・Pod Identity Agent・Controller 用の IAM ロールを足します。\n\nRDS のマスターパスワードは Secrets Manager が管理し、state にも Git にも平文を残しません。接続は PGSSLMODE=require で TLS を使います。ALB の health check は / で、DB 障害で全ターゲットが外れないようにしています。", AWS_NOTICE, [
-                step("chart の生成物を読む", "クラスターに適用せず、作られるリソースをファイルに書き出します。", command_from(lab_texts[7], "helm template aws-load-balancer-controller"), "ServiceAccount・RBAC・Deployment・Webhook・CRD などが書き出される。"),
-                step("Ingress の状態を見る", "ALB が作られ、許可した IP だけに公開されているかを確認します。", command_from(lab_texts[7], "kubectl -n workboard describe ingress workboard"), "ADDRESS に ALB の DNS 名が入り、イベントにエラーがない。")]),
-            section("identity", "公開と権限を限定する", "認証のない WorkBoard を恒常的にインターネットへ公開しません。inbound-cidrs で学習者の IP に絞り、検証が終わったら Ingress を削除して ALB を消します。\n\nhelm history で release の履歴を見て、rollback の単位を確かめます。S3 への CSV エクスポートと Redis + Worker は任意の発展課題で、README に設計の観点だけを置いています。", AWS_NOTICE, [
-                step("release の履歴を見る", "rollback で戻る単位を確認します。", command_from(lab_texts[7], "helm history aws-load-balancer-controller -n kube-system"), "revision ごとの状態と chart の版が並ぶ。"),
-                step("公開を終える", "ALB を先に消してから、Terraform の削除に進みます。", command_from(lab_texts[7], "kubectl -n workboard delete ingress workboard"), "しばらくして ALB とそのセキュリティグループが消える。")]),
+            section("path", "入口とDBをクラスターの外へ", "Phase 6 のクラスターが稼働していることが前提です。Phase 7 の Terraform は Phase 6 のファイルや state を読まず、クラスター名などの変数と data source で既存の環境を参照し、RDS・Pod Identity Agent・Controller 用の IAM ロールを足します。\n\nRDS のマスターパスワードは Secrets Manager が管理し、state にも Git にも平文を残しません。接続は PGSSLMODE=require で TLS を使います。ALB の health check は / で、DB 障害で全ターゲットが外れないようにしています。\n\n→ 実習「2. Helm chart の中身を読む（AWS に接続しない）」「6. ALB と公開範囲を確認する」「7. RDS を観察する」で確かめます。", AWS_NOTICE),
+            section("identity", "公開と権限を限定する", "認証のない WorkBoard を恒常的にインターネットへ公開しません。inbound-cidrs で学習者の IP に絞り、検証が終わったら Ingress を削除して ALB を消します。\n\nhelm history で release の履歴を見て、rollback の単位を確かめます。S3 への CSV エクスポートと Redis + Worker は任意の発展課題で、README に設計の観点だけを置いています。\n\n→ 実習「4. kubeconfig を作り、Controller を導入する」「6. ALB と公開範囲を確認する」「D. Ingress を削除して、ALB が消えることを確認する」で確かめます。", AWS_NOTICE),
         ], phase_diagram(7))
 
     add(8, "pipeline", "変更と運用をつなぐ", "CI/CD・Argo CD・Prometheus・SLO", "review", 100,
@@ -515,13 +494,8 @@ def add_advanced(add, lab_texts):
             concept("Prometheus と PromQL", "API の /metrics から定期的に値を集め、リクエスト率・エラー率・p95 応答時間を式で求めます。", "定期的に検針して使用量を計算する係"),
             concept("SLI / SLO", "SLI は利用者から見た指標、SLO はその目標値です。分子・分母・除外条件・期間を決め、測る前に達成とは言いません。", "測った所要時間と約束する所要時間"),
         ], [
-            section("delivery", "テスト・反映・復旧を切り分ける", ".github/workflows/ci.yaml は push と pull request でテスト・ビルド・kustomize・Terraform・スクリプトを検証します。cd.yaml は手動実行だけで、GitHub の environment の承認を待ってから ECR に push し EKS に適用します。AWS 側の準備をするまでは動きません。\n\nArgo CD は専用クラスター workboard-phase8 で試します。同期対象は GitHub 上のリポジトリなので、自分の fork に push するまで同期できません。DB のパスワードは Git に置かず、構築スクリプトが Secret を事前に作ります。", "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。", [
-                step("専用クラスターを作る", "WorkBoard・Argo CD・Prometheus を導入します。", command_from(lab_texts[8], "powershell -NoProfile -File phases/08-devops-observability/scripts/up.ps1"), "API 3/3、Web 2/2、Prometheus と Argo CD の Pod が Running。", command_from(lab_texts[8], "bash phases/08-devops-observability/scripts/up.sh")),
-                step("同期の状態を見る", "push 前は同期できないことも観察結果です。", command_from(lab_texts[8], "kubectl --context kind-workboard-phase8 -n argocd get application workboard"), "push 前は Unknown（ComparisonError）、push 後は Synced / Healthy。"),
-                step("手動の変更で drift を作る", "Git と異なる状態にして、Argo CD が差分を検出するかを見ます。", command_from(lab_texts[8], "kubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=5"), "Application が OutOfSync になり、同期で 2 Pod に戻る。")]),
-            section("observe", "測った事実で改善する", "Prometheus は kubernetes_sd で API の Pod を見つけ、/metrics を集めます。slo.md に、ヘルスチェックを除いた成功率と p95 応答時間の定義があります。\n\nNginx が返す 504/502 は API に届かないため、API のメトリクスには現れません。メトリクスで分からないことは、ログやイベントで補います。", steps=[
-                step("Prometheus を開く", "WorkBoard とは別のポートです。", command_from(lab_texts[8], "kubectl --context kind-workboard-phase8 -n monitoring port-forward --address 127.0.0.1 svc/prometheus 8087:9090"), "http://localhost:8087 で Prometheus が開く。"),
-                step("リクエストを流し続ける", "応答と時刻を記録し、PromQL の値と比べます。", command_from(lab_texts[8], "powershell -NoProfile -File phases/08-devops-observability/scripts/watch-http.ps1"), "時刻・ステータス・秒数が一定間隔で表示される。", command_from(lab_texts[8], "bash phases/08-devops-observability/scripts/watch-http.sh"))]),
+            section("delivery", "テスト・反映・復旧を切り分ける", ".github/workflows/ci.yaml は push と pull request でテスト・ビルド・kustomize・Terraform・スクリプトを検証します。cd.yaml は手動実行だけで、GitHub の environment の承認を待ってから ECR に push し EKS に適用します。AWS 側の準備をするまでは動きません。\n\nArgo CD は専用クラスター workboard-phase8 で試します。同期対象は GitHub 上のリポジトリなので、自分の fork に push するまで同期できません。DB のパスワードは Git に置かず、構築スクリプトが Secret を事前に作ります。\n\n→ 実習「5. Argo CD を開き、push 前の状態を確認する」「6. 同期、drift、revert を観察する」「7. CI をローカルで再現する」「A. 手動の変更（drift）を検出し、直す」で確かめます。", "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。"),
+            section("observe", "測った事実で改善する", "Prometheus は kubernetes_sd で API の Pod を見つけ、/metrics を集めます。slo.md に、ヘルスチェックを除いた成功率と p95 応答時間の定義があります。\n\nNginx が返す 504/502 は API に届かないため、API のメトリクスには現れません。メトリクスで分からないことは、ログやイベントで補います。\n\n→ 実習「3. WorkBoard とメトリクスを確認する」「4. PromQL でリクエスト率・エラー率・p95 を求める」「C. DB のロックで遅延を作り、p95 の変化を観察する」で確かめます。"),
         ], phase_diagram(8))
 
     add(9, "comparison", "ECSとEKSを選び分ける", "同じ要件で採用判断を書く", "review", 90,
@@ -530,8 +504,8 @@ def add_advanced(add, lab_texts):
             concept("責任共有と運用人件費", "マネージドの範囲が違えば、自分たちが担うパッチ・容量・アドオンの工数が変わります。利用料に加え、人の時間と学習負担もコストです。", "家賃が安くても管理を全部自分でやる物件"),
             concept("判断が変わる条件", "結論を一つの正解にせず、どの仮定が変わると逆転するかを残します。反対案を最も有利な条件で擁護して確かめます。", "雨なら中止と条件を付けた予定"),
         ], [
-            section("scenario", "同じサービス要件で比較する", "ecs-vs-eks.md の課題シナリオは、月間数十万リクエスト規模の社内タスク管理を少人数で運用し、将来複数サービスが加わる可能性がある状況です。これはユーザーの実要件ではなく、比較のための仮定です。\n\narchitecture.md で同じ WorkBoard を ECS と EKS に載せた構成を比べ、Phase 1〜8 で観察したことを根拠として使います。このラボは AWS もクラスターも操作しません。"),
-            section("decision", "採用案を反対案と一緒に書く", "採用案だけでなく、もう一方を選ばない理由と、その判断が変わる条件も残します。既存技術や組織の習熟度も要件の一部です。\n\n料金は AWS Pricing Calculator と公式料金ページで、region・時間・構成・調査日をそろえて自分で確認します。教材には料金の値を載せていません。"),
+            section("scenario", "同じサービス要件で比較する", "ecs-vs-eks.md の課題シナリオは、月間数十万リクエスト規模の社内タスク管理を少人数で運用し、将来複数サービスが加わる可能性がある状況です。これはユーザーの実要件ではなく、比較のための仮定です。\n\narchitecture.md で同じ WorkBoard を ECS と EKS に載せた構成を比べ、Phase 1〜8 で観察したことを根拠として使います。このラボは AWS もクラスターも操作しません。\n\n→ 実習「1. 構成要素と責任分界を公式資料で確認する」で確かめます。"),
+            section("decision", "採用案を反対案と一緒に書く", "採用案だけでなく、もう一方を選ばない理由と、その判断が変わる条件も残します。既存技術や組織の習熟度も要件の一部です。\n\n料金は AWS Pricing Calculator と公式料金ページで、region・時間・構成・調査日をそろえて自分で確認します。教材には料金の値を載せていません。\n\n→ 実習「2. 費用を同じ条件で見積もる」「4. 反対意見を試す」で確かめます。"),
         ], phase_diagram(9))
 
 

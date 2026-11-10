@@ -26,7 +26,7 @@ function LessonSection({ section, index, notify, shell, onShell }: { section: Ph
       {command && <div className="command-block">
         <div className="command-top">{step.linuxCommand
           ? <span className="shell-tabs" role="group" aria-label="シェルの選択">{(Object.keys(SHELL_LABELS) as Shell[]).map(name => <Button key={name} className="shell-tab" aria-pressed={shell === name} onClick={() => onShell(name)}>{SHELL_LABELS[name]}</Button>)}</span>
-          : <span>TERMINAL</span>}<Button className="copy-button" onClick={async () => {
+          : <span>{step.shell ? `${SHELL_LABELS[step.shell]} のみ` : "TERMINAL"}</span>}<Button className="copy-button" onClick={async () => {
           try { await navigator.clipboard.writeText(command); notify("コマンドをコピーしました。内容を確認してから実行してください。"); }
           catch { notify("コピーできませんでした。コマンドを選択してコピーしてください。", true); }
         }}>コピー</Button></div>

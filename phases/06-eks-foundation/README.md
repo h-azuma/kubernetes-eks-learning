@@ -47,14 +47,39 @@
 
 ### 1. 適用前に読む（AWS に接続しない）
 
+目的：Terraform ファイルの書式が整っているかを確認します（AWS には接続しません）。
+
 ```text
 terraform -chdir=phases/06-eks-foundation/terraform fmt -check -recursive
+```
+
+確認：出力が何もなければ書式は整っています。整っていないファイルがあると、そのファイル名が表示されます。
+
+目的：provider を取得して、次の `validate` を実行できる状態にします。`-backend=false` を付けているので、state の保存先には接続しません。
+
+```text
 terraform -chdir=phases/06-eks-foundation/terraform init -backend=false
+```
+
+確認：`Terraform has been successfully initialized!` が表示されれば成功です。`init -backend=false` は provider を取得するだけで、AWS には接続しません。
+
+目的：Terraform の文法と引数の整合を確認します。
+
+```text
 terraform -chdir=phases/06-eks-foundation/terraform validate
+```
+
+確認：`Success! The configuration is valid.` が表示されれば成功です。`validate` は AWS 側で作成できるかは確認しません。あわせて `terraform/` の変数ファイルを開き、`public_access_cidrs` に validation（`0.0.0.0/0` の拒否）があることを読んで確認します。
+
+目的：環境に依存しない共通部分（`base`）の生成結果を、適用前に読みます。
+
+```text
 kubectl kustomize phases/06-eks-foundation/kustomize/base
 ```
 
-Kustomize の `eks` overlay は、Secret の入力ファイル `secrets/db.env` が必要です。ダミーを作って生成結果を読みます（この例ファイルは Git に入れません）。
+確認：エラーなく YAML が出力されれば成功です。この出力を、あとの `overlays/eks` の出力と比べます。
+
+目的：`eks` overlay は Secret の入力ファイル `secrets/db.env` が必要です。ダミー値だけの例ファイルからコピーして、生成結果を読めるようにします（この例ファイルは Git に入れません）。
 
 **Windows (PowerShell):**
 
@@ -68,20 +93,21 @@ Copy-Item phases/06-eks-foundation/kustomize/overlays/eks/secrets/db.env.example
 cp phases/06-eks-foundation/kustomize/overlays/eks/secrets/db.env.example phases/06-eks-foundation/kustomize/overlays/eks/secrets/db.env
 ```
 
+確認：エラーが出なければ `db.env` が作られています。`deploy` は `db.env` が無いときだけランダムな値で作成するため、このダミーを残したまま `deploy` するとダミー値が DB のパスワードになります。ダミーのまま使いたくない場合は、生成結果を読み終えたあとで `db.env` を削除してから `deploy` します。
+
+目的：`eks` overlay を生成して、`base` に差分が重なった適用前の最終形を読みます。
+
 ```text
 kubectl kustomize phases/06-eks-foundation/kustomize/overlays/eks
 ```
 
-観察する点は以下です。
-
-- `terraform init -backend=false` は provider を取得するだけで、AWS には接続しません。`validate` は文法と引数の整合を確認するもので、AWS 側で作成できるかは確認しません。
-- `terraform/` の変数に、`public_access_cidrs` の validation（`0.0.0.0/0` の拒否）があること。
-- `overlay` の出力で、イメージが `111122223333.dkr.ecr...`（ダミーのアカウント ID）になっていること。実際のアカウント ID は `scripts/deploy` が適用時にだけ差し替えます。
-- DB が `emptyDir` の Deployment であること（[ADR-0012](decisions/0012-kustomize-eks-and-throwaway-db.md) は課題の後で読む）。
+確認：次の 2 点を見ます。(1) イメージが `111122223333.dkr.ecr...`（ダミーのアカウント ID）になっていること。実際のアカウント ID は `scripts/deploy` が適用時にだけ差し替えます。(2) DB が `emptyDir` の Deployment であること（[ADR-0012](decisions/0012-kustomize-eks-and-throwaway-db.md) は課題の後で読みます）。
 
 ### 2. （承認後）`terraform plan` の差分を読む
 
 `terraform.tfvars.example` をコピーして `terraform.tfvars` を作り、自分の値に置き換えます。`allowed_account_id`、`admin_principal_arn`、`public_access_cidrs`（自分のグローバル IP の /32）が必須です。`terraform.tfvars` は Git に入れません。
+
+目的：`terraform.tfvars.example` をコピーして、自分の値を入れる `terraform.tfvars` を作ります（`terraform.tfvars` は Git に入れません）。
 
 **Windows (PowerShell):**
 
@@ -95,105 +121,209 @@ Copy-Item phases/06-eks-foundation/terraform/terraform.tfvars.example phases/06-
 cp phases/06-eks-foundation/terraform/terraform.tfvars.example phases/06-eks-foundation/terraform/terraform.tfvars
 ```
 
+確認：エラーが出なければ `terraform.tfvars` が作られています。エディターで `allowed_account_id`、`admin_principal_arn`、`public_access_cidrs`（自分のグローバル IP の /32）を自分の値に置き換えます。
+
+目的：AWS に何が作られるか（差分）を読みます。AWS の認証情報が必要ですが、`plan` は何も作成しません。
+
 ```text
 terraform -chdir=phases/06-eks-foundation/terraform plan
 ```
 
-作成されるリソースの種類と数、料金が発生するもの（EKS クラスター、EC2、NAT Gateway、EIP）を一覧にして記録します。`plan` は何も作成しません。内容を理解し、費用に同意してから、次の `apply` に進みます。**`apply` は承認した後にだけ実行します。**
+確認：出力の末尾に `Plan: N to add, 0 to change, 0 to destroy.` のような件数が表示されるはずです（未検証）。作成されるリソースの種類と数、料金が発生するもの（EKS クラスター、EC2、NAT Gateway、EIP）を一覧にして記録します。内容を理解し、費用に同意してから、次の `apply` に進みます。
+
+目的：**費用が発生します。** `plan` で読んだ差分を AWS に実際に作成します。開始条件（承認、見積もり、予算通知、クリーンアップ手順のレビュー）を満たし、明示的に判断した後にだけ自分の手で実行します。
 
 ```text
 terraform -chdir=phases/06-eks-foundation/terraform apply
 ```
 
-クラスターの作成には十数分かかります。完了後、`terraform output` で VPC ID や ECR の URL を確認します。
+確認：完了まで十数分かかります。成功すると `Apply complete! Resources: N added, 0 changed, 0 destroyed.` が表示されるはずです（未検証）。実行前に、`plan` の差分と見積もりの金額を記録し、削除する日時を決めておきます。作成した時点から課金が続くため、学習を終えたら必ず [aws-cleanup.md](aws-cleanup.md) の手順で削除します。完了後、`terraform output` で VPC ID や ECR の URL を確認します。
 
 ### 3. kubeconfig を作り、クラスターを観察する
 
 新しいターミナルごとに最初の行を実行します。`env.ps1`（Bash は `env.sh`。`source` で読み込みます）は、このシェルだけで EKS 用の kubeconfig（`.kube/workboard-eks.yaml`）と region を使う設定です。
 
+目的：このシェルだけで EKS 用の kubeconfig（`.kube/workboard-eks.yaml`）と region を使う設定にして、以降の `kubectl` と AWS CLI がこの Phase の設定を向くようにします。
+
 **Windows (PowerShell):**
 
 ```powershell
 . .\phases\06-eks-foundation\scripts\env.ps1
-powershell -NoProfile -File phases/06-eks-foundation/scripts/update-kubeconfig.ps1
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 source phases/06-eks-foundation/scripts/env.sh
+```
+
+確認：画面に出力は想定していません。エラーが出なければ設定済みです。Bash で `source` を付けずに実行した場合は、`source` で読み込み直してください。
+
+目的：EKS クラスターに接続するための kubeconfig を作ります。AWS を操作するスクリプトなので、対象のアカウント・region・クラスター名が表示され、`yes` の入力を求められます。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File phases/06-eks-foundation/scripts/update-kubeconfig.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 bash phases/06-eks-foundation/scripts/update-kubeconfig.sh
 ```
 
+確認：表示された内容が承認した環境であることを確かめてから `yes` を入力します。エラーなく終了すれば kubeconfig が作られているはずです（未検証）。
+
+目的：Node の一覧と、AZ・OS イメージ・カーネル・kubelet の版を確認します。
+
 ```text
 kubectl get nodes -o wide
+```
+
+確認：Node が 2 台（AZ が別）で `STATUS` が `Ready` であることを見ます。`VERSION`（kubelet の版）がコントロールプレーンの版に合っていること、`OS-IMAGE` と `KERNEL-VERSION` の値も記録します（未検証）。
+
+目的：`kube-system` の Pod を確認して、EKS が標準で動かすアドオンを把握します。
+
+```text
 kubectl get pods -n kube-system -o wide
+```
+
+確認：`coredns`・`kube-proxy`・`aws-node`（vpc-cni）の Pod があり、`STATUS` が `Running` のはずです（未検証）。`NODE` 列でどの Node に載っているかも見ます。
+
+目的：今の認証で全リソースへ全操作ができるかを確認して、access entry が効いているかを確かめます。
+
+```text
 kubectl auth can-i '*' '*'
+```
+
+確認：`yes` と表示されれば、access entry が効いています（未検証）。
+
+目的：全 Node の OS イメージ名だけを取り出します。
+
+```text
 kubectl get nodes -o jsonpath='{.items[*].status.nodeInfo.osImage}'
+```
+
+確認：Node の数だけ OS イメージ名が 1 行に並んで表示されるはずです（未検証）。`get nodes -o wide` の `OS-IMAGE` と一致することを確かめます。
+
+目的：Node の詳細（OS・kubelet・容量・状態・載っている Pod・イベント）を読みます。
+
+```text
 kubectl describe node
 ```
 
-観察する点は、Node が 2 台（AZ が別）で Ready であること、OS イメージとカーネルの版、kubelet の版がコントロールプレーンの版に合っていること、`kube-system` に coredns・kube-proxy・aws-node（vpc-cni）があること、`can-i` が yes（access entry が効いている）であることです。ノードの OS を更新するのは誰か、EKS が自動で更新するもの・しないものを `describe node` の情報と合わせて書き出します。
+確認：`System Info`、`Conditions`、`Non-terminated Pods`、`Events` を見ます。ノードの OS を更新するのは誰か、EKS が自動で更新するもの・しないものを、`describe node` の情報と合わせて書き出します。
 
 ### 4. イメージを ECR に置き、アプリを適用する
+
+目的：ECR にログインし、API/Web を `linux/amd64` でビルドして `phase6` タグで ECR に push します。AWS を操作するスクリプトなので、対象のアカウント・region が表示され、`yes` の入力を求められます。
 
 **Windows (PowerShell):**
 
 ```powershell
 powershell -NoProfile -File phases/06-eks-foundation/scripts/push-images.ps1
-powershell -NoProfile -File phases/06-eks-foundation/scripts/deploy.ps1
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 bash phases/06-eks-foundation/scripts/push-images.sh
+```
+
+確認：表示された内容を確かめてから `yes` を入力します。エラーなく終了し、ECR に `phase6` タグのイメージができるはずです（未検証）。
+
+目的：`eks` overlay のダミーのレジストリを実アカウントの ECR に置き換えて EKS に適用し、DB・migration Job・API・Web の準備完了を待ちます。`db.env` が無ければランダムな値で作成します（値は表示しません）。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File phases/06-eks-foundation/scripts/deploy.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 bash phases/06-eks-foundation/scripts/deploy.sh
 ```
 
-`push-images` は ECR にログインし、API/Web を `linux/amd64` でビルドして `phase6` タグで push します。`deploy` は `db.env` が無ければランダムな値で作成し（値は表示しません）、overlay のダミーのレジストリを実アカウントの ECR に置き換えて適用し、DB・migration Job・API・Web の準備完了を待ちます。
+確認：エラーなく終了し、最後に Pod・Deployment・Service の一覧が表示されるはずです（未検証）。待機が終わらない場合は、あとの `ImagePullBackOff` などの切り分け（「失敗時に確認すること」）を見ます。
+
+目的：`workboard` namespace の Pod・Deployment・Service・Job を、配置先の Node つきで確認します。
 
 ```text
 kubectl -n workboard get pods,deploy,svc,job -o wide
+```
+
+確認：期待結果は、Pod が 2 つのノードのどちらかに配置され、migration Job が `Completed`、API/Web/DB が Ready であることです（未検証）。
+
+目的：API の Pod の詳細を読み、イメージの取得元とイベントを確認します。
+
+```text
 kubectl -n workboard describe pod -l app=workboard-api
 ```
 
-期待結果は、Pod が 2 つのノードのどちらかに配置され、migration Job が Completed、API/Web/DB が Ready であることです。イメージの取得元（ECR）とイベントを `describe pod` で確認します。`ImagePullBackOff` になる場合は、「失敗時に確認すること」を見ます。
+確認：`Image` が ECR のもの（実アカウントの ECR）で、`Events` にエラーがないことを見ます（未検証）。`ImagePullBackOff` になる場合は、「失敗時に確認すること」を見ます。
 
 ### 5. ブラウザーと curl で確認する
 
-8086 番が使われていないことを確認し、次のコマンドを実行中のまま残します。
+目的：ローカルの 8086 番から Web に入る入口を作ります。先に 8086 番が使われていないことを確認します。**別のターミナルで実行したままにします。**
 
 ```text
 kubectl -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8086:80
 ```
 
-[http://localhost:8086](http://localhost:8086) でダミータスクを作ります。別のターミナルで次の確認もできます。
+確認：`Forwarding from 127.0.0.1:8086 -> 80` のように表示され、プロンプトに戻らなければ待ち受け中です（未検証）。[http://localhost:8086](http://localhost:8086) を開いてダミータスクを作ります。この入口はローカルの PC だけが使えます。インターネットには公開されていません（ALB は Phase 7）。止めるときは、そのターミナルで `Ctrl+C` を押します。
+
+目的：API の Readiness を `curl` で確認します（port-forward とは別のターミナルで実行します）。
 
 **Windows (PowerShell):**
 
 ```powershell
 curl.exe -i http://localhost:8086/health/ready
-curl.exe -s http://localhost:8086/api/v1/tasks
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 curl -i http://localhost:8086/health/ready
+```
+
+確認：`HTTP/1.1 200` など成功のステータス行が表示されるはずです（未検証）。接続できない場合は、port-forward が動いているかを確かめます。
+
+目的：画面で作ったダミータスクを、API から JSON で読みます。
+
+**Windows (PowerShell):**
+
+```powershell
+curl.exe -s http://localhost:8086/api/v1/tasks
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 curl -s http://localhost:8086/api/v1/tasks
 ```
 
-この入口はローカルの PC だけが使えます。インターネットには公開されていません（ALB は Phase 7）。
+確認：作成したダミータスクを含む JSON が表示されるはずです（未検証）。
 
 ### 6. ネットワークと権限を観察する
 
+目的：Terraform が作った VPC・subnet・NAT・ECR などの出力値を読みます。
+
 ```text
 terraform -chdir=phases/06-eks-foundation/terraform output
+```
+
+確認：`nat_public_ips` などの出力が表示されるはずです（未検証）。どのノードがどの AZ にいるか、private subnet のノードが NAT 経由でイメージを取得していること、NAT の EIP（`nat_public_ips`）がノードの外向き通信の送信元であることを、構成図と対応づけます。
+
+目的：Node ごとの AZ・インスタンスタイプ・Node Group 名を列にして表示します。
+
+```text
 kubectl get nodes -L topology.kubernetes.io/zone,node.kubernetes.io/instance-type,eks.amazonaws.com/nodegroup
 ```
 
-どのノードがどの AZ にいるか、private subnet のノードが NAT 経由でイメージを取得していること、NAT の EIP（`nat_public_ips`）がノードの外向き通信の送信元であることを、構成図と対応づけます。API endpoint の許可 CIDR 外のネットワークから `kubectl get nodes` を試せる場合は、拒否されること（接続できない、またはタイムアウト）を確認します（任意）。
+確認：`ZONE`、`INSTANCE-TYPE`、`NODEGROUP` 相当の列が追加され、Node が別の AZ に分かれているはずです（未検証）。API endpoint の許可 CIDR 外のネットワークから `kubectl get nodes` を試せる場合は、拒否されること（接続できない、またはタイムアウト）を確認します（任意）。
 
 ## 故障実験
 
@@ -201,21 +331,57 @@ kubectl get nodes -L topology.kubernetes.io/zone,node.kubernetes.io/instance-typ
 
 ### A. ノードを 1 台、計画的に外す（drain）
 
+目的：drain 前の Pod の配置を記録します。
+
 ```text
 kubectl get pods -n workboard -o wide
+```
+
+確認：各 Pod がどの Node に載っているか（`NODE` 列）を記録し、drain する Node の名前を決めます。
+
+目的：Node を 1 台、計画的に外します（Pod を別の Node へ追い出し、新しい Pod をその Node に置かなくします）。`<ノード名>` は上の出力で決めた Node の名前に置き換えます。DB の `emptyDir` のデータは、この操作で消えます。
+
+```text
 kubectl drain <ノード名> --ignore-daemonsets --delete-emptydir-data
+```
+
+確認：DaemonSet 以外の Pod が退避（evict）されたと表示されるはずです（未検証）。`--delete-emptydir-data` の意味を調べて書き出します。
+
+目的：drain 後の Pod の配置を確認します。
+
+```text
 kubectl get pods -n workboard -o wide
+```
+
+確認：Pod が別のノードに再配置されること、Pod が 1 台に集まり得ること、DB（`emptyDir`）がノードを移るとデータが消えることを観察します（未検証）。
+
+目的：外した Node を、再び Pod を置ける状態に戻します。
+
+```text
 kubectl uncordon <ノード名>
 ```
 
-Pod が別のノードに再配置されること、Pod が 1 台に集まり得ること、DB（emptyDir）がノードを移るとデータが消えることを観察します。`--delete-emptydir-data` の意味を調べます。
+確認：`node/<ノード名> uncordoned` と表示されるはずです（未検証）。`kubectl get nodes` で `SchedulingDisabled` が消えていることを確かめます。
 
 ### B. DB Pod を削除する（emptyDir のデータは消える）
 
+目的：DB の Pod を削除して、`emptyDir` のデータが消えることを観察します。
+
 ```text
 kubectl -n workboard delete pod -l app=workboard-postgres
+```
+
+確認：`pod "..." deleted` と表示されるはずです（未検証）。
+
+目的：DB の Deployment が新しい Pod で Ready になるまで待ちます。
+
+```text
 kubectl -n workboard rollout status deployment/workboard-postgres --timeout=180s
 ```
+
+確認：`successfully rolled out` と表示されて終了するはずです（未検証）。180 秒で終わらなければタイムアウトします。
+
+目的：DB を作り直した後のタスクの残り方を API で確認します（port-forward が動いている必要があります）。
 
 **Windows (PowerShell):**
 
@@ -229,19 +395,35 @@ curl.exe -s http://localhost:8086/api/v1/tasks
 curl -s http://localhost:8086/api/v1/tasks
 ```
 
-タスクが消え（または API が一時的に失敗し）、migration Job を再実行しないとスキーマが戻らないことを観察します（`deploy` スクリプトの再実行で復旧）。Phase 3 の PVC との違いを書き出します。
+確認：タスクが消え（または API が一時的に失敗し）、migration Job を再実行しないとスキーマが戻らないことを観察します（`deploy` スクリプトの再実行で復旧）。Phase 3 の PVC との違いを書き出します。
 
-### C. （任意、費用・影響を確認した場合のみ）ノードの EC2 を 1 台停止する
+### C. （任意、費用・影響を確認した場合のみ）ノードの EC2 を 1 台終了（terminate）する
 
-承認した AWS 環境で、自分のクラスターのノードだけを対象にします。対象のインスタンス ID を、タグで絞って確認してから停止します。
+承認した AWS 環境で、自分のクラスターのノードだけを対象にします。対象のインスタンス ID を、タグで絞って確認してから終了します。終了したインスタンスは元に戻せず、Managed Node Group が代わりのノードを作るかを観察します。
+
+目的：終了する対象の EC2 インスタンス ID を、クラスター名のタグで絞って確認します（読み取りだけで、何も変更しません）。
 
 ```text
 aws ec2 describe-instances --filters "Name=tag:eks:cluster-name,Values=workboard-learning" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].InstanceId" --output text --region ap-northeast-1
+```
+
+確認：このクラスターの running のインスタンス ID だけが表示されるはずです（未検証）。次のコマンドに渡す ID は、必ずこの出力から選びます。
+
+目的：確認したインスタンス 1 台を終了します。**コマンドは `terminate-instances`（終了＝削除）で、元に戻せません。** 費用と影響を確認し、実行すると判断した場合だけ、`<確認したインスタンス ID>` を上の出力の 1 台に置き換えて実行します。
+
+```text
 aws ec2 terminate-instances --instance-ids <確認したインスタンス ID> --region ap-northeast-1
+```
+
+確認：インスタンスが `shutting-down` になったと表示されるはずです（未検証）。対象が自分のクラスターの 1 台であることを、実行前に必ず確かめます。
+
+目的：Node の状態の変化を見続けます。**別のターミナルで実行したままにします。** 観察が終わったら `Ctrl+C` で止めます。
+
+```text
 kubectl get nodes -w
 ```
 
-Auto Scaling グループが新しいノードを作ること、`kubectl get nodes` で NotReady → 新しい Node が参加するまでの時間、Pod の再スケジュールを観察します。
+確認：Auto Scaling グループが新しいノードを作ること、`kubectl get nodes` で NotReady → 新しい Node が参加するまでの時間、Pod の再スケジュールを観察します（未検証）。
 
 ## 失敗時に確認すること
 

@@ -32,27 +32,13 @@ Lab 01 完了、Linux コンテナエンジンが動く Docker（Windows / macOS
 
 すべてリポジトリ直下で実行します。`-f` は定義ファイル、`-n` は Namespace、`--context` は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は `kind-workboard-lab` を指定します。
 
+各コマンドは 1 つずつ実行します。コマンドの直前の「目的」で何のために打つかを、直後の「確認」で出力のどこを見るかを確かめてから、次のコマンドへ進みます。
+
 ### 1. ツール導入とクラスター構築
 
 初回だけ実行します。Windows は PowerShell 5.1 以降、Linux / macOS / WSL は Bash（Linux 側の条件は「Linux / macOS / WSL での前提」を参照）で行います。PowerShell と Bash は同じ処理をするスクリプトです。
 
-**Windows (PowerShell):**
-
-```powershell
-powershell -NoProfile -File tools/kind-install.ps1
-powershell -NoProfile -File phases/02-kind-basics/scripts/up.ps1
-```
-
-**Linux / macOS / WSL (Bash):**
-
-```bash
-bash tools/kind-install.sh
-bash phases/02-kind-basics/scripts/up.sh
-```
-
-installer は公式 kind を取得し SHA-256 を検証して、Windows では `.tools/kind.exe`、Linux では `.tools/kind` に置きます。管理者権限や永続的な PATH 変更は不要です。構築スクリプトは Docker・kubectl の対応を確認し、専用 kubeconfig `.kube/workboard-kind.yaml` を作ります。既存クラスター・DB の削除はしません。同名クラスターだけあり、専用 kubeconfig がない場合は確認のため停止します。
-
-起動処理は以下の順です。固定秒数の sleep ではなく、実際の状態を待ちます。
+構築スクリプト `up`（`up.ps1` / `up.sh`）の起動処理は以下の順です。固定秒数の sleep ではなく、実際の状態を待ちます。
 
 1. `kind create cluster`（存在しなければ作成）
 2. 同じ API/Web Dockerfile のビルド
@@ -61,11 +47,43 @@ installer は公式 kind を取得し SHA-256 を検証して、Windows では `
 5. migration Job 適用 → Complete 待ち
 6. Web/API 適用 → Deployment の準備完了待ち
 
-期待結果は Node が Ready、Deployment が各1 Pod、migration Job が Completed です。イメージ投入はホストの Docker と kind ノードのイメージ保存先が別であるため必要です。API/Web は `imagePullPolicy: Never` なので投入忘れは `ErrImageNeverPull` になります。PostgreSQL は `IfNotPresent` でノードが公式レジストリから取得します。ローカル学習用ビルドは `--provenance=false` とし、複数 platform・attestation の manifest をノードへ持ち込む問題を避けます。
+目的：kind のインストーラーを実行します。公式 kind を取得し SHA-256 を検証して、Windows では `.tools/kind.exe`、Linux では `.tools/kind` に置きます。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File tools/kind-install.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+bash tools/kind-install.sh
+```
+
+確認：エラーが出ずに終了すれば完了です。管理者権限や永続的な PATH 変更は不要です。
+
+目的：上の 1〜6 の構築（クラスター作成、イメージ投入、Namespace・DB・migration・Web/API の適用、準備完了待ち）を実行して、専用 kubeconfig `.kube/workboard-kind.yaml` を作ります。Docker・kubectl の対応も確認します。
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -NoProfile -File phases/02-kind-basics/scripts/up.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+bash phases/02-kind-basics/scripts/up.sh
+```
+
+確認：エラーなく終了することを見ます。期待結果は Node が Ready、Deployment が各1 Pod、migration Job が Completed です。既存クラスター・DB の削除はしません。同名クラスターだけあり、専用 kubeconfig がない場合は確認のため停止します。イメージ投入はホストの Docker と kind ノードのイメージ保存先が別であるため必要です。API/Web は `imagePullPolicy: Never` なので投入忘れは `ErrImageNeverPull` になります。PostgreSQL は `IfNotPresent` でノードが公式レジストリから取得します。ローカル学習用ビルドは `--provenance=false` とし、複数 platform・attestation の manifest をノードへ持ち込む問題を避けます。
 
 ### 2. 現在のシェルで対象を選び、状態を観察する
 
 **構築済みのこの作業環境では、まずここから進めてください。** 新しいターミナルを開くたびに最初の行を実行します。PowerShell の先頭のドットとスペース、Bash の `source` は、設定を今のシェルへ読み込む指定です（Bash の `env.sh` は実行ではなく `source` で使います）。
+
+目的：このシェルだけで `.tools` と専用 KUBECONFIG を使う設定にして、以降の `kubectl` が `workboard-lab` を向くようにします。
 
 **Windows (PowerShell):**
 
@@ -79,59 +97,117 @@ installer は公式 kind を取得し SHA-256 を検証して、Windows では `
 source phases/02-kind-basics/scripts/env.sh
 ```
 
+確認：画面に出力は想定していません。エラーが出なければ設定済みです。標準 kubeconfig やシステム PATH は変更しません。
+
+目的：Node が Ready か確認します。
+
 ```text
 kubectl --context kind-workboard-lab get nodes
+```
+
+確認：STATUS が `Ready` であることを見ます。
+
+目的：`workboard` Namespace の Pod・ReplicaSet・Deployment・Service を一覧して、全体の状態を確認します。
+
+```text
 kubectl --context kind-workboard-lab -n workboard get pods,rs,deploy,svc
+```
+
+確認：Deployment が各1 Pod で、Pod・ReplicaSet・Deployment・Service が揃っていることを見ます。Compose 用コンテナはこの一覧には出ません。
+
+目的：Pod の label を表示して、Service の selector と対応づけます。
+
+```text
 kubectl --context kind-workboard-lab -n workboard get pods --show-labels
 ```
 
-`scripts/env.ps1`（Bash は `env.sh`）は今のシェルだけに `.tools` と専用 KUBECONFIG を設定します。標準 kubeconfig やシステム PATH は変更しません。Compose 用コンテナはこの一覧には出ません。
+確認：Pod の LABELS に `app=workboard-api` などが付いていることを見ます。後の手順で Service の selector と見比べます。
 
-API の所有関係も調べます。
+目的：API の所有関係を調べます。まず API の Pod の詳細（IP・Node）を見ます。
 
 ```text
 kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o wide
+```
+
+確認：API の Pod が 1 つ表示され、Pod IP が見えることを見ます。
+
+目的：API の Pod を管理している ReplicaSet を確認します。
+
+```text
 kubectl --context kind-workboard-lab -n workboard get rs -l app=workboard-api -o wide
+```
+
+確認：Pod 名の前半と ReplicaSet 名が対応していることを見ます。Deployment → ReplicaSet → Pod の順に管理されます。
+
+目的：Deployment の詳細を読みます。
+
+```text
 kubectl --context kind-workboard-lab -n workboard describe deployment workboard-api
+```
+
+確認：`NewReplicaSet` が前の手順の ReplicaSet であること、Pod テンプレートの label が `app=workboard-api` であることを見ます。
+
+目的：Service の詳細を読みます。
+
+```text
 kubectl --context kind-workboard-lab -n workboard describe service workboard-api
+```
+
+確認：Service の selector `app=workboard-api` と Pod の label を見比べます。Service の ClusterIP と Pod IP は別であることを見ます。
+
+目的：Service の転送先 Pod を表す EndpointSlice を確認します。
+
+```text
 kubectl --context kind-workboard-lab -n workboard get endpointslices -l kubernetes.io/service-name=workboard-api
 ```
 
-Deployment → ReplicaSet → Pod の順に管理されます。Service の selector `app=workboard-api` と Pod の label を見比べてください。Service の ClusterIP と Pod IP は別です。EndpointSlice には転送先 Pod のアドレスが含まれます。
+確認：EndpointSlice に転送先 Pod のアドレスが含まれることを見ます。
 
 ### 3. ブラウザーで同じアプリを使う
 
-8080 番を Compose 等で使っていないことを確認します。次のコマンドは実行中のまま残し、ブラウザーを別に開きます。
+目的：Web Service をホストの 8080 番へ転送して、ブラウザーから WorkBoard を使えるようにします。8080 番を Compose 等で使っていないことを確認してから実行します。このコマンドは実行中のまま残し、ブラウザーと次の確認コマンドは別のターミナルで操作します。
 
 ```text
 kubectl --context kind-workboard-lab -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8080:80
 ```
 
-`8080:80` はホスト8080番から Service80番への転送です。`Forwarding from 127.0.0.1:8080 -> 80` が期待結果。[http://localhost:8080](http://localhost:8080) でダミータスク「kind の学習」を作り、編集・ステータス絞り込み・再読込を試してください。削除の確認は別のダミータスクで行い、「kind の学習」は次の実験用に残します。
+確認：`Forwarding from 127.0.0.1:8080 -> 80` が表示され、コマンドは終了せずに待機し続けます。`8080:80` はホスト8080番から Service80番への転送です。[http://localhost:8080](http://localhost:8080) でダミータスク「kind の学習」を作り、編集・ステータス絞り込み・再読込を試してください。削除の確認は別のダミータスクで行い、「kind の学習」は次の実験用に残します。Service を指定した port-forward は、selector から選ばれた Web Pod へトンネルします。ClusterIP 自体を外部公開する操作ではありません。Web から API への通信では実際に ClusterIP Service を使います。
 
-Service を指定した port-forward は、selector から選ばれた Web Pod へトンネルします。ClusterIP 自体を外部公開する操作ではありません。Web から API への通信では実際に ClusterIP Service を使います。
-
-別のターミナルで以下を実行すれば health も確認できます。
+目的：別のターミナルで、API の Liveness を Web 経由で確認します。
 
 **Windows (PowerShell):**
 
 ```powershell
 curl.exe -i http://localhost:8080/health/live
-curl.exe -i http://localhost:8080/health/ready
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
 curl -i http://localhost:8080/health/live
+```
+
+確認：ステータス行が `200` であることを見ます。
+
+目的：別のターミナルで、API の Readiness を Web 経由で確認します。
+
+**Windows (PowerShell):**
+
+```powershell
+curl.exe -i http://localhost:8080/health/ready
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
 curl -i http://localhost:8080/health/ready
 ```
 
-どちらも200が期待結果です。port-forward は永続的な公開設定ではなく、コマンドを止めると接続できなくなります。
+確認：ステータス行が `200` であることを見ます。port-forward は永続的な公開設定ではなく、コマンドを止めると接続できなくなります。
 
 ### 4. API Pod を削除し、自動復旧を観察する
 
-別のターミナルで専用設定を読み込み、現在の Pod の名前・UID・IP を記録します。
+目的：別のターミナルで、このシェルが専用設定（`workboard-lab`）を使うようにします。
 
 **Windows (PowerShell):**
 
@@ -145,51 +221,105 @@ curl -i http://localhost:8080/health/ready
 source phases/02-kind-basics/scripts/env.sh
 ```
 
+確認：画面に出力は想定していません。エラーが出なければよいです。
+
+目的：削除する前の API Pod の名前・UID・IP を記録します。
+
 ```text
-kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP
-kubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-api
-kubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-api --timeout=180s
 kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP
 ```
 
-名前・UID が変わり、Pod が1つに戻ります。IP は再利用される場合もあるので「必ず変わる」とは判断しません。ブラウザー再読込でタスクが残り、同じ URL から操作できることを確認します。API Pod を消しただけなので DB は残っています。
+確認：Pod が 1 つ表示されることを見て、名前・UID・IP を控えます。削除後に比べるための値です。
+
+目的：API Pod を削除して、Deployment（ReplicaSet）に作り直させます。DB は削除しません。
+
+```text
+kubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-api
+```
+
+確認：`pod "..." deleted` と表示されます。削除すると元の UID を取得できなくなるため、直前の記録を済ませてから実行してください。
+
+目的：新しい API Pod の準備完了まで待ちます。
+
+```text
+kubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-api --timeout=180s
+```
+
+確認：待機が終わり、180 秒のタイムアウトで失敗しないことを見ます。
+
+目的：作り直された API Pod の名前・UID・IP を、削除前の記録と比べます。
+
+```text
+kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP
+```
+
+確認：名前・UID が変わり、Pod が1つに戻ります。IP は再利用される場合もあるので「必ず変わる」とは判断しません。ブラウザー再読込でタスクが残り、同じ URL から操作できることを確認します。API Pod を消しただけなので DB は残っています。
 
 ### 5. マニフェストを再適用する
+
+目的：Namespace・DB・migration・Web/API のマニフェストを再適用して、`apply` が冪等であることを確認します。
 
 ```text
 kubectl --context kind-workboard-lab apply -f phases/02-kind-basics/manifests/namespace.yaml -f phases/02-kind-basics/manifests/postgres.yaml -f phases/02-kind-basics/manifests/migrate.yaml -f phases/02-kind-basics/manifests/app.yaml
 ```
 
-定義を変更していなければ基本的に `unchanged` です。再適用だけで毎回新しい Pod が作られるわけではありません。完了済み migration Job も再実行されません。
+確認：定義を変更していなければ、基本的に各行が `unchanged` と表示されます。再適用だけで毎回新しい Pod が作られるわけではありません。完了済み migration Job も再実行されません。
 
-アプリコードを変更して構築スクリプトを再実行した場合は、同じ `:kind` タグを使うため、以下で新しいイメージから Pod を作り直します。
+アプリコードを変更して構築スクリプトを再実行した場合は、同じ `:kind` タグを使うため、次のコマンドで新しいイメージから Pod を作り直します。
+
+目的：Web と API の Deployment を再起動して、新しいイメージから Pod を作り直します（アプリコードを変更して構築スクリプトを再実行したときだけ実行します）。
 
 ```text
 kubectl --context kind-workboard-lab -n workboard rollout restart deployment/workboard-api deployment/workboard-web
 ```
 
-Web Pod を置き換えると port-forward の接続も終了することがあります。その場合は手順3を再実行します。
+確認：`deployment.apps/workboard-api restarted` などと表示されることを見ます。Web Pod を置き換えると port-forward の接続も終了することがあります。その場合は手順3を再実行します。
 
 ## 故障実験: 一時 DB とデータ消失
 
 **このラボで作ったダミータスクを失ってよいと確認できた場合だけ実行してください。** 次の DB Pod 削除はタスクとスキーマを消します。Compose の DB/volume には影響しません。
 
+目的：DB Pod を削除します。消えるのは、この Pod の emptyDir にあるタスクとスキーマです。実行前に、失ってよいダミータスクだけであることを確認してください。
+
 ```text
 kubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-postgres
+```
+
+確認：`pod "..." deleted` と表示されます。DB は新しい emptyDir で起動します。
+
+目的：新しい DB Pod の準備完了まで待ちます。
+
+```text
 kubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-postgres --timeout=180s
 ```
 
-DB は新しい emptyDir で起動します。既存の migration Job は完了済みなので、そのままではテーブルがありません。`/health/ready` は接続の `SELECT 1` だけを確認するため200に戻る場合もありますが、CRUD が使えることまでは保証しません。
+確認：待機が終わり、180 秒のタイムアウトで失敗しないことを見ます。既存の migration Job は完了済みなので、そのままではテーブルがありません。`/health/ready` は接続の `SELECT 1` だけを確認するため200に戻る場合もありますが、CRUD が使えることまでは保証しません。
 
 スキーマを戻すには Job だけを削除して再適用します。
 
+目的：完了済みの migration Job だけを削除します。完了済みの Job は再実行されないため、削除してから作り直します。
+
 ```text
 kubectl --context kind-workboard-lab -n workboard delete job workboard-migrate
+```
+
+確認：`job.batch "workboard-migrate" deleted` と表示されます。
+
+目的：migration のマニフェストだけを再適用して、Job を作り直します。
+
+```text
 kubectl --context kind-workboard-lab apply -f phases/02-kind-basics/manifests/migrate.yaml
+```
+
+確認：`job.batch/workboard-migrate created` と表示されます。
+
+目的：migration Job の完了まで待ちます。
+
+```text
 kubectl --context kind-workboard-lab -n workboard wait --for=condition=complete job/workboard-migrate --timeout=180s
 ```
 
-ブラウザーを再読込すると一覧が空になります。タスクを新規作成して動作復旧を確認します。元のタスクの復元ではありません。
+確認：`job.batch/workboard-migrate condition met` と表示され、180 秒のタイムアウトで失敗しないことを見ます。ブラウザーを再読込すると一覧が空になります。タスクを新規作成して動作復旧を確認します。元のタスクの復元ではありません。
 
 ## 失敗時に確認すること
 
@@ -215,13 +345,15 @@ kubectl --context kind-workboard-lab -n workboard wait --for=condition=complete 
 
 port-forward を実行しているターミナルで `Ctrl+C` を押すとブラウザーの入口を閉じます。これはクラスターの停止ではなく、Node とアプリは動き続けます。
 
-kind クラスターを削除すると今回の DB データも失います。クラスター名と消失するデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。
+kind クラスターを削除すると今回の DB データも失います。クラスター名と消失するデータを確認し、削除してよいと明示的に判断した場合だけ次のコマンドを使います。
+
+目的：kind クラスター `workboard-lab` を削除します。削除前に、クラスター名が `workboard-lab` であることと、失う DB データ（ダミータスク）を確認してください。
 
 ```text
 kind delete cluster --name workboard-lab
 ```
 
-削除を実施した場合、専用 kubeconfig が残っていれば対象を確認してそのファイルだけを削除してから、構築スクリプトを実行します。他の kubeconfig は削除しません。作り直したクラスターは空の DB で始まります。Compose の volume は残ります。
+確認：クラスター `workboard-lab` が削除されたことを示す表示になることを見ます。削除を実施した場合、専用 kubeconfig が残っていれば対象を確認してそのファイルだけを削除してから、構築スクリプトを実行します。他の kubeconfig は削除しません。作り直したクラスターは空の DB で始まります。Compose の volume は残ります。
 
 ## 完了条件
 

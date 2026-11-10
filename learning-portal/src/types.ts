@@ -45,7 +45,7 @@ export type Phase = {
     title: string;
     body: string;
     callout?: string;
-    steps?: { title: string; description: string; command?: string; linuxCommand?: string; expected?: string }[];
+    steps?: { title: string; description: string; command?: string; linuxCommand?: string; shell?: "powershell" | "bash"; expected?: string }[];
   }[];
   diagram: Diagram;
   questions: { id: string; prompt: string; rubric: string[] }[];

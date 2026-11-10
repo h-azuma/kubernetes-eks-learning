@@ -26,35 +26,69 @@ Git と PowerShell 5.1 以降、または Bash を利用する。その他のツ
 
 ## 検証コマンド・期待結果
 
-リポジトリ直下で実行します。
+リポジトリ直下で実行します。各コマンドは 1 つずつ実行します。コマンドの直前の「目的」で何のために打つかを、直後の「確認」で出力のどこを見るかを確かめてから、次のコマンドへ進みます。
+
+目的：Bash のみ。`preflight.sh` を実行せずに、構文エラーがないかだけを確かめます。
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+bash -n tools/preflight.sh
+```
+
+確認：何も表示されず、エラーが出なければ構文は正常です。PowerShell には対応するコマンドはありません。
+
+目的：Git、Docker、Docker Compose、kubectl、kind、Python、Node.js、AWS CLI、Terraform の導入状況とバージョンを、読み取りだけで確認します（何も導入・変更しません）。
 
 **Windows (PowerShell):**
 
 ```powershell
 powershell -NoProfile -File .\tools\preflight.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+bash tools/preflight.sh
+```
+
+確認：各ツールの結果が表示されることを見ます。Bash は `python3`、PowerShell は `python` を確認します。各シェルの PATH が異なると結果も変わります。他ツールは未導入でもよく、必須なのは Git だけです。
+
+目的：直前の preflight の終了コードを確認します（preflight の直後に、同じシェルで実行します）。
+
+**Windows (PowerShell):**
+
+```powershell
 $LASTEXITCODE
 ```
 
 **Linux / macOS / WSL (Bash):**
 
 ```bash
-bash -n tools/preflight.sh
-bash tools/preflight.sh
 echo $?
 ```
 
-Git、Docker、Docker Compose、kubectl、kind、Python、Node.js、AWS CLI、Terraform の結果が表示される。Git のバージョン取得に成功すれば終了コード 0。他ツールは未導入でもよい。Bash は `python3`、PowerShell は `python` を確認する。各シェルの PATH が異なると結果も変わる。
+確認：Git のバージョン取得に成功していれば `0` と表示されます。
 
-コマンド未検出なら PATH と導入先を確認する。「確認失敗」なら対象のバージョンコマンドを単独で実行し、終了コードと出力を調べる。実行ポリシーの拒否はシェルの設定として確認する。
+コマンド未検出なら PATH と導入先を確認します。「確認失敗」なら対象のバージョンコマンドを単独で実行し、終了コードと出力を調べます。実行ポリシーの拒否はシェルの設定として確認します。
 
-Git 初期化済みの作業コピーでは、次で除外設定も観察できる:
+Git 初期化済みの作業コピーでは、次の 2 つで除外設定も観察できます。ファイルを作る必要はありません。未初期化なら `git init` を行うか、Git の除外確認は未実施として記録します。
+
+目的：秘密情報になり得るファイル（`.env`、`terraform.tfvars`、`terraform.tfstate`、`credentials.json`、`private.key`）が `.gitignore` で除外されることを確認します。
 
 ```text
 git check-ignore --no-index .env terraform/environments/lab/terraform.tfvars terraform/environments/lab/terraform.tfstate credentials.json private.key
+```
+
+確認：5 つすべてのパスが表示され、終了コードが 0 であれば、すべて除外されています。
+
+目的：例示ファイル（`.env.example`、`terraform.tfvars.example`）が除外されないことを確認します。
+
+```text
 git check-ignore --no-index .env.example terraform/environments/lab/terraform.tfvars.example
 ```
 
-最初のコマンドは全対象のパスを表示して終了コード 0。次は何も表示せず終了コード 1（例示ファイルは除外されない）。ファイルを作る必要はない。未初期化なら `git init` を行うか、Git の除外確認は未実施として記録する。
+確認：何も表示されず、終了コードが 1 であれば、例示ファイルは除外されていません。
 
 ## 完了条件
 
