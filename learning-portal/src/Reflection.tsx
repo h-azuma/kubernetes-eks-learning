@@ -86,7 +86,7 @@ export function Reflection({ phase, learning, ai, notify }: Props) {
       <fieldset className="provider-choice" disabled={grading}>
         <legend>採点に使う AI</legend>
         {ai.providers.map(provider => <label key={provider.id} className={provider.available ? undefined : "unavailable"}>
-          <input type="radio" name="ai-provider" value={provider.id} checked={selected?.id === provider.id} disabled={!provider.available} onChange={() => choose(provider.id)} /><span>{provider.label}</span>
+          <input type="radio" name="ai-provider" value={provider.id} checked={selected?.id === provider.id} disabled={!provider.available} onChange={() => choose(provider.id)} /><span>{provider.label}（{provider.model}）</span>
         </label>)}
       </fieldset>
       {selected && <p className="ai-privacy"><Icon name="shield" size={15} /><span>保存はローカルのみ。AI ボタンを押したときだけ、このフェーズの回答・メモを{PROVIDER_DESTINATION[selected.id] || selected.label}へ送信します。</span></p>}

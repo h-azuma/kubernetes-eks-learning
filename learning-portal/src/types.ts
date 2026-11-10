@@ -71,7 +71,7 @@ export type PhaseProgress = {
   feedback: Feedback | null;
   imported?: boolean;
 };
-export type AiProvider = { id: string; label: string; available: boolean; message: string };
+export type AiProvider = { id: string; label: string; model: string; available: boolean; message: string };
 export type Bootstrap = {
   curriculum: { title: string; phases: Phase[] };
   progress: Record<string, PhaseProgress>;

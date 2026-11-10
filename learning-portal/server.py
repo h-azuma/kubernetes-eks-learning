@@ -322,11 +322,14 @@ class CliGrader:
 
     provider = ""
     label = ""
+    model_variable = ""  # 採点に使うモデルを上書きする環境変数
+    default_model = ""
     lock = threading.Lock()  # プロバイダーをまたいで同時採点を1件にする。
 
     def __init__(self, command: list[str] | None = None, timeout: int = GRADE_TIMEOUT):
         self.command = command if command is not None else self.discover()
         self.timeout = timeout
+        self.model = os.environ.get(self.model_variable) or self.default_model
         self.active_process = None
         self.available = False
         self.message = f"{self.label} CLI が見つかりません。記録の保存は利用できます。"
@@ -344,7 +347,7 @@ class CliGrader:
         return subprocess.run(self.command + list(arguments), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, check=False)
 
     def status(self) -> dict:
-        return {"id": self.provider, "label": self.label, "available": self.available, "message": self.message}
+        return {"id": self.provider, "label": self.label, "model": self.model, "available": self.available, "message": self.message}
 
     def cancel(self):
         process = self.active_process
@@ -388,6 +391,8 @@ class CliGrader:
 class CodexGrader(CliGrader):
     provider = "codex"
     label = "Codex"
+    model_variable = "CODEX_GRADER_MODEL"
+    default_model = "gpt-6-luna"
     DISABLED_FEATURES = {
         "shell_tool", "unified_exec", "apps", "plugins", "skill_search", "multi_agent",
         "browser_use", "browser_use_external", "computer_use", "image_generation",
@@ -409,7 +414,7 @@ class CodexGrader(CliGrader):
     def build_command(self, folder: Path, phase: dict) -> list[str]:
         (folder / "schema.json").write_text(json.dumps(grade_schema(phase), ensure_ascii=False), encoding="utf-8")
         command = self.command + [
-            "exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only",
+            "exec", "--model", self.model, "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only",
             "--ignore-user-config", "--color", "never", "-c", 'web_search="disabled"',
             "-c", "project_doc_max_bytes=0", "--output-schema", str(folder / "schema.json"),
             "--output-last-message", str(folder / "feedback.json"),
@@ -428,6 +433,8 @@ class CodexGrader(CliGrader):
 class ClaudeGrader(CliGrader):
     provider = "claude"
     label = "Claude"
+    model_variable = "CLAUDE_GRADER_MODEL"
+    default_model = "claude-sonnet-5-5"
 
     def discover(self):
         return discover_claude()
@@ -440,7 +447,7 @@ class ClaudeGrader(CliGrader):
 
     def build_command(self, folder: Path, phase: dict) -> list[str]:
         return self.command + [
-            "-p", "--output-format", "json", "--json-schema", json.dumps(grade_schema(phase), separators=(",", ":")),
+            "-p", "--model", self.model, "--output-format", "json", "--json-schema", json.dumps(grade_schema(phase), separators=(",", ":")),
             "--tools", "", "--strict-mcp-config", "--restricted", "--disable-slash-commands",
             "--no-session-persistence", "--permission-mode", "dontAsk", "--permission-prompts", "none",
         ]

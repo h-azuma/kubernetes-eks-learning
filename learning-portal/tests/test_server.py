@@ -133,6 +133,7 @@ class CliTests(unittest.TestCase):
     def grader(self):
         grader = CodexGrader.__new__(CodexGrader)
         grader.command = ["fixed-codex.exe"]
+        grader.model = CodexGrader.default_model
         grader.timeout = 1
         grader.available = True
         grader.features = {"shell_tool", "unified_exec"}
@@ -142,6 +143,7 @@ class CliTests(unittest.TestCase):
     def claude_grader(self):
         grader = ClaudeGrader.__new__(ClaudeGrader)
         grader.command = ["fixed-claude.exe"]
+        grader.model = ClaudeGrader.default_model
         grader.timeout = 1
         grader.available = True
         grader.message = "利用可能"
@@ -184,6 +186,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(command[command.index("--tools") + 1], "")
         self.assertEqual(command[command.index("--output-format") + 1], "json")
         self.assertEqual(command[command.index("--permission-mode") + 1], "dontAsk")
+        self.assertEqual(command[command.index("--model") + 1], "claude-sonnet-5-5")
         self.assertEqual(json.loads(command[command.index("--json-schema") + 1]), grade_schema(PHASE))
 
     def test_claude_failures_do_not_produce_scores(self):
@@ -218,6 +221,21 @@ class CliTests(unittest.TestCase):
 
     def test_grading_lock_is_shared_across_providers(self):
         self.assertIs(CodexGrader.lock, ClaudeGrader.lock)
+
+    def test_grading_model_has_default_and_can_be_overridden(self):
+        with patch.dict("os.environ", {}, clear=False) as environment:
+            environment.pop("CODEX_GRADER_MODEL", None)
+            environment.pop("CLAUDE_GRADER_MODEL", None)
+            self.assertEqual(CodexGrader(["missing-codex.exe"]).model, "gpt-6-luna")
+            self.assertEqual(ClaudeGrader(["missing-claude.exe"]).model, "claude-sonnet-5-5")
+        with patch.dict("os.environ", {"CODEX_GRADER_MODEL": "codex-x", "CLAUDE_GRADER_MODEL": "claude-y"}):
+            codex, claude = CodexGrader(["missing-codex.exe"]), ClaudeGrader(["missing-claude.exe"])
+        self.assertEqual((codex.model, claude.model), ("codex-x", "claude-y"))
+        folder = Path(tempfile.mkdtemp())
+        command = codex.build_command(folder, PHASE)
+        self.assertEqual(command[command.index("--model") + 1], "codex-x")
+        (folder / "schema.json").unlink()
+        folder.rmdir()
         self.assertIs(CodexGrader.lock, CliGrader.lock)
         codex, claude = self.grader(), self.claude_grader()
         codex.lock.acquire()

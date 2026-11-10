@@ -2,7 +2,9 @@
 
 - ユーザー向け回答、進捗報告、文書は日本語で書く。
 - 一次設計書は `docs/kubernetes-eks-hands-on-design.md`。`docs/PROJECT_DESIGN.md` は入口として使う。
-- 現在の作業範囲は Phase 3（設定、機密情報、永続化）。次のフェーズはユーザーから指示されてから着手する。将来用の空ファイルや機能を先回りして作らない。
+- Phase 0〜9 の資材はすべて実装済み（2026-11-10、ユーザーの指示で Phase 4〜9 を一括実装）。以降の作業は既存 Phase の改善・不具合修正で、ユーザーの指示がある範囲だけ行う。将来用の空ファイルや機能を先回りして作らない。
+- Phase 6・7 の AWS 資材は静的検証（`terraform validate`、`helm template`、`kubectl kustomize`）のみで、AWS 上では未検証。CD ワークフロー（`.github/workflows/cd.yaml`）も未実行。
+- kind のクラスター名・ポートは Phase ごとに固有（`workboard-lab`/8080、`workboard-phase3`/8081、`workboard-phase4`/8082、`workboard-phase5`/8083、`workboard-phase8`/8084・Argo CD 8085・Prometheus 8087）。EKS の port-forward は 8086。新しい資材でも重複させない。
 - 新しい Phase の資材（ラボ手順・マニフェスト・スクリプト・構成図・ADR）は `phases/NN-xxx/` に作り、他の Phase のディレクトリに依存させない。共通で使うのは `app/` と `tools/` だけ。理由は ADR-0007。
 - 個人の記録（観察結果・設計課題への回答）は README に書かず、学習ポータルにだけ保存する。ラボ README の「学習メモ」節は記録する項目の一覧だけにする。
 - Phase 別の ADR は `phases/NN-xxx/decisions/` に提案として置き、全体に関わる ADR だけ `docs/adr/` に置く（一覧は `docs/adr/README.md`）。

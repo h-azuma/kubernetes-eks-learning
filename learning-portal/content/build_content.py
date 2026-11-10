@@ -11,8 +11,13 @@ LABS = [
     "phases/01-compose/README.md",
     "phases/02-kind-basics/README.md",
     "phases/03-config-storage/README.md",
+    "phases/04-reliability-scaling/README.md",
+    "phases/05-security-and-failure/README.md",
+    "phases/06-eks-foundation/README.md",
+    "phases/07-aws-integration/README.md",
+    "phases/08-devops-observability/README.md",
+    "phases/09-architecture-review/README.md",
 ]
-IMPLEMENTED = len(LABS)
 
 
 def read(path):
@@ -227,18 +232,18 @@ def phase_diagram(phase_id):
         groups = k8s_groups("Node A / 実行場所") + [diagram_group("node-b", "Node B / 実行場所", "node", "cluster")]
         nodes = [diagram_node("metrics", "CPU 指標", "document", "metrics-server 等から得る値", "cluster", 0), diagram_node("hpa", "HPA", "kubernetes.hpa", "replicas を調整する宣言", "management", 0), diagram_node("deploy", "API Deployment", "kubernetes.deployment", "更新方針と必要数", "management", 1), diagram_node("rs", "API ReplicaSet", "kubernetes.replicaset", "Pod 数を維持", "management", 1), diagram_node("service", "API Service", "kubernetes.service", "準備できた Pod を選択", "namespace", 0), pod("api-a", "API Pod A", "FastAPI", 0), pod("api-b", "API Pod B", "FastAPI", 0, "node-b")]
         edges = [relation("metrics", "hpa", "判断材料", "configuration"), relation("hpa", "deploy", "replicas を調整", "control"), relation("deploy", "rs", "所有", "ownership"), relation("rs", "api-a", "所有", "ownership"), relation("rs", "api-b", "所有", "ownership"), relation("service", "api-a", "HTTP"), relation("service", "api-b", "HTTP")]
-        views = [diagram_view("traffic", "通信と配置", "予習の API 拡大図です。Service は Node 内のプロセスではありません。2 Pod が異なる Node に配置される条件は別途設計が必要です。", ["service", "api-a", "api-b"], ["traffic"]), diagram_view("control", "数を調整する関係", "指標→HPA→Deployment は制御。Deployment→ReplicaSet→Pod は所有関係です。HPA は Node 台数を直接増やしません。", ["metrics", "hpa", "deploy", "rs", "api-a", "api-b"], ["configuration", "control", "ownership"])]
-        return diagram_model("scaling", "通信・レプリカ制御・Node 配置", "Phase 4 の予習。API 部分の拡大図で、DB/Web は省略しています。", nodes, edges, groups, views)
+        views = [diagram_view("traffic", "通信と配置", "API の拡大図です。Service は Node 内のプロセスではありません。Pod を異なる Node に置くのは topologySpreadConstraints の条件で、レプリカ数だけでは決まりません。", ["service", "api-a", "api-b"], ["traffic"]), diagram_view("control", "数を調整する関係", "指標→HPA→Deployment は制御。Deployment→ReplicaSet→Pod は所有関係です。HPA は Node 台数を直接増やしません。", ["metrics", "hpa", "deploy", "rs", "api-a", "api-b"], ["configuration", "control", "ownership"])]
+        return diagram_model("scaling", "通信・レプリカ制御・Node 配置", "workboard-phase4（control-plane 1 + worker 2）の API 部分の拡大図です。DB/Web は省略しています。", nodes, edges, groups, views)
     if phase_id == 5:
         nodes = [diagram_node("user", "利用者", "identity", "Kubernetes API を操作する主体", "host"), diagram_node("sa", "ServiceAccount", "kubernetes.serviceaccount", "ワークロードの API アクセス主体", "namespace", 0), diagram_node("role", "Role / RoleBinding", "kubernetes.role", "Namespace 内の認可設定", "management", 1), diagram_node("kapi", "Kubernetes API", "kubernetes.api", "Control Plane の API", "cluster", 2), pod("web-pod", "Web Pod", "Nginx", 0), diagram_node("api-service", "API Service", "kubernetes.service", "HTTP の接続先", "namespace", 1), pod("api-pod", "API Pod", "FastAPI", 1), diagram_node("policy", "NetworkPolicy", "kubernetes.networkpolicy", "対応 CNI が適用する通信規則", "namespace", 2)]
         edges = [relation("user", "kapi", "API 操作要求", "control"), relation("sa", "kapi", "Pod の API 要求", "control"), relation("role", "kapi", "認可条件", "configuration"), relation("web-pod", "api-service", "HTTP"), relation("api-service", "api-pod", "HTTP"), relation("policy", "api-pod", "許可・拒否の設定", "configuration")]
-        views = [diagram_view("authorization", "操作する権限", "予習。RBAC は API に何を要求できるかを決めます。ServiceAccount はコンテナではありません。", ["user", "sa", "role", "kapi"], ["configuration", "control"]), diagram_view("network", "アプリの通信", "実線が HTTP。NetworkPolicy 自体が通信を中継するのではなく、対応 CNI がルールを適用します。", ["web-pod", "api-service", "api-pod", "policy"], ["traffic", "configuration"])]
-        return diagram_model("security", "API 権限とアプリ通信を分ける", "Phase 5 の予習。Namespace の権限と Pod の実行場所を区別して描きます。", nodes, edges, k8s_groups(), views)
+        views = [diagram_view("authorization", "操作する権限", "RBAC は API に何を要求できるかを決めます。ServiceAccount はコンテナではありません。", ["user", "sa", "role", "kapi"], ["configuration", "control"]), diagram_view("network", "アプリの通信", "実線が HTTP。NetworkPolicy 自体が通信を中継するのではなく、対応 CNI がルールを適用します。", ["web-pod", "api-service", "api-pod", "policy"], ["traffic", "configuration"])]
+        return diagram_model("security", "API 権限とアプリ通信を分ける", "workboard-phase5（Calico）の構成です。Namespace の権限と Pod の実行場所を区別して描きます。", nodes, edges, k8s_groups(), views)
     if phase_id == 6:
         groups = [diagram_group("outside", "構成を定義する利用者", "external"), diagram_group("aws", "AWS 環境 / 責任の分担", "aws"), diagram_group("cluster", "EKS / Kubernetes クラスター", "cluster", "aws"), diagram_group("managed-control", "AWS が運用する Control Plane", "aws", "cluster"), diagram_group("runtime", "Managed Node Group / EC2 上の Node", "node", "cluster")]
         nodes = [diagram_node("tf", "Terraform", "document", "利用者が構成と差分を管理", "outside", 0), diagram_node("vpc", "VPC / subnet", "aws.vpc", "利用者が経路・アクセス範囲を設計", "aws", 0), diagram_node("eks", "EKS Control Plane", "aws.eks", "AWS が運用・利用者がアクセス設定", "managed-control", 1), diagram_node("ecr", "ECR", "aws.ecr", "クラスター外のイメージ保管", "aws", 2), pod("web-pod", "Web Pod", "Nginx", 0), pod("api-pod", "API Pod", "FastAPI", 1)]
         edges = [relation("tf", "vpc", "構成を定義", "configuration"), relation("tf", "eks", "構成を定義", "configuration"), relation("eks", "web-pod", "配置・状態の調整", "control"), relation("eks", "api-pod", "配置・状態の調整", "control"), relation("ecr", "web-pod", "イメージを配布", "configuration"), relation("ecr", "api-pod", "イメージを配布", "configuration")]
-        return diagram_model("eks", "AWS 管理と利用者の責任", "Phase 6 の将来案。標準 EKS の Control Plane は AWS が運用します。Managed Node Group でも Node/AMI 更新方針・アドオン・アプリ設定は利用者の責任として残ります。枠は実行配置と責任の説明で、VPC が Control Plane 全体を包含するという意味ではありません。", nodes, edges, groups)
+        return diagram_model("eks", "AWS 管理と利用者の責任", "Phase 6 の構成（AWS 上は未検証）。標準 EKS の Control Plane は AWS が運用します。Managed Node Group でも Node/AMI 更新方針・アドオン・アプリ設定は利用者の責任として残ります。枠は実行配置と責任の説明で、VPC が Control Plane 全体を包含するという意味ではありません。", nodes, edges, groups)
     if phase_id == 7:
         groups = k8s_groups("EKS の Node / 利用者のワークロード")
         groups.insert(1, diagram_group("aws", "AWS マネージドサービス", "aws"))
@@ -246,12 +251,12 @@ def phase_diagram(phase_id):
         nodes = [diagram_node("browser", "ブラウザー", "browser", "制限した検証アクセス", "host", 0), diagram_node("alb", "ALB", "aws.alb", "クラスター外の HTTP 入口", "aws", 0), diagram_node("rds", "RDS PostgreSQL", "aws.rds", "クラスター外の DB", "aws", 2), diagram_node("iam", "IAM role", "aws.iam", "Controller の ALB 管理権限", "aws", 3), diagram_node("ingress", "Ingress 定義", "document", "Kubernetes API に保存する入口の宣言", "management", 0), diagram_node("web-service", "Web Service", "kubernetes.service", "ターゲットを選ぶ backend 定義", "namespace", 0), diagram_node("api-service", "API Service", "kubernetes.service", "内部 HTTP 接続先", "namespace", 1), pod("web-pod", "Web Pod", "Nginx", 0), pod("api-pod", "API Pod", "FastAPI", 1), pod("lbc-pod", "Controller Pod", "AWS Load Balancer Controller", 3)]
         nodes[-5]["namespace"] = "workboard"  # Ingress も namespaced な API オブジェクト。
         edges = [relation("browser", "alb", "HTTP / 制限付き"), relation("alb", "web-pod", "HTTP / IP ターゲット案"), relation("web-pod", "api-service", "/api/ HTTP"), relation("api-service", "api-pod", "HTTP"), relation("api-pod", "rds", "SQL"), relation("web-service", "web-pod", "selector", "configuration"), relation("ingress", "web-service", "backend を宣言", "configuration"), relation("ingress", "lbc-pod", "監視する定義", "configuration"), relation("lbc-pod", "alb", "作成・更新を要求", "control"), relation("iam", "lbc-pod", "AWS API 権限", "configuration")]
-        views = [diagram_view("traffic", "HTTP と SQL の経路", "将来の IP ターゲット案を例示。ALB は選ばれた Web Pod へ転送します。Service はターゲット選択の論理設定で、Controller はリクエストを中継しません。実装時に方式を確定します。", ["browser", "alb", "web-service", "web-pod", "api-service", "api-pod", "rds"], ["traffic", "configuration"]), diagram_view("control", "ALB を管理する関係", "Ingress は宣言、Controller Pod は実行中のプログラム、ALB は AWS の別サービスです。Controller はクラスター外の ALB を管理できるため、実行場所と管理対象の境界は一致しません。", ["ingress", "web-service", "lbc-pod", "alb", "iam"], ["control", "configuration"])]
-        return diagram_model("integration", "Kubernetes と AWS サービスの連携", "Phase 7 の予習。RDS/ALB/IAM は Kubernetes Pod ではありません。IAM 図は Controller の AWS API 操作権限で、アプリの RDS SQL 認証とは別です。", nodes, edges, groups, views)
+        views = [diagram_view("traffic", "HTTP と SQL の経路", "IP ターゲット方式です。ALB は選ばれた Web Pod へ直接転送します。Service はターゲット選択の論理設定で、Controller はリクエストを中継しません。", ["browser", "alb", "web-service", "web-pod", "api-service", "api-pod", "rds"], ["traffic", "configuration"]), diagram_view("control", "ALB を管理する関係", "Ingress は宣言、Controller Pod は実行中のプログラム、ALB は AWS の別サービスです。Controller はクラスター外の ALB を管理できるため、実行場所と管理対象の境界は一致しません。", ["ingress", "web-service", "lbc-pod", "alb", "iam"], ["control", "configuration"])]
+        return diagram_model("integration", "Kubernetes と AWS サービスの連携", "Phase 7 の構成（AWS 上は未検証）。RDS/ALB/IAM は Kubernetes Pod ではありません。IAM 図は Controller の AWS API 操作権限で、アプリの RDS SQL 認証とは別です。", nodes, edges, groups, views)
     if phase_id == 8:
         nodes = [diagram_node("git", "Git の変更", "document", "構成の正本", column=0), diagram_node("ci", "CI", "pipeline", "テスト・ビルド", column=1), diagram_node("approve", "承認", "document", "反映するかの判断", column=2), diagram_node("cd", "CD / GitOps", "pipeline", "方式を比較して選ぶ", column=3), diagram_node("app", "対象環境", "document", "構成と実状態の照合先", column=4), diagram_node("observe", "ログ・指標", "document", "SLI と復旧判断", column=5)]
         edges = [relation("git", "ci", "検査", "configuration"), relation("ci", "approve", "結果", "configuration"), relation("approve", "cd", "反映を許可", "control"), relation("cd", "app", "更新", "control"), relation("app", "observe", "計測結果", "configuration"), relation("observe", "git", "改善", "configuration")]
-        return diagram_model("pipeline", "変更から次の改善へ", "Phase 8 の予習。これは工程と情報の流れで、箱がすべて Kubernetes リソースやコンテナという意味ではありません。", nodes, edges)
+        return diagram_model("pipeline", "変更から次の改善へ", "Phase 8 の工程です。これは工程と情報の流れで、箱がすべて Kubernetes リソースやコンテナという意味ではありません。", nodes, edges)
     nodes = [diagram_node("requirements", "想定要件", "document", "規模・チーム・SLO", column=0), diagram_node("ecs", "ECS 案", "aws.ecs", "構成と運用の選択肢", column=1), diagram_node("eks", "EKS 案", "aws.eks", "構成と運用の選択肢", column=2), diagram_node("compare", "比較表", "document", "費用・責任・移植性", column=3), diagram_node("adr", "採用 ADR", "document", "理由・反対案・不確実性", column=4)]
     edges = [relation("requirements", "ecs", "同じ要件", "configuration"), relation("requirements", "eks", "同じ要件", "configuration"), relation("ecs", "compare", "根拠", "configuration"), relation("eks", "compare", "根拠", "configuration"), relation("compare", "adr", "判断", "configuration")]
     return diagram_model("comparison", "要件から根拠ある選定へ", "サービスの比較を表す概念図です。EKS の採用やクラスターの構築が完了したという意味ではありません。", nodes, edges)
@@ -285,66 +290,92 @@ RUBRICS = [
         ["Secretはbase64で表現されるだけで暗号化ではないと説明する", "読み取りやexecができる主体、RBAC、保存時の保護、配布先を含めて考える"],
         ["ConfigMap/Secretの内容変更でハッシュ付き名が変わりPodテンプレートが更新されると説明する", "環境変数は起動時に決まるため、既存Podは自動で新しい値に変わらないと区別する"],
     ],
-    [["同一ノードの障害で全レプリカが停止し得ると説明する", "ノードやAZへの分散とDBの単一障害点も考える"], ["HPAは主にワークロードのレプリカ数を調整すると説明する", "ノード容量の追加は別の仕組みであると説明する"]],
-    [["Secretはbase64だけで秘密を保護できないと説明する", "APIアクセス権限・保存時の保護・配布先を含めて考える"], ["人とワークロードを区別し最小権限を考える", "操作の対象・範囲・監査の観点を説明する"], ["k9sはkubeconfigの資格情報でKubernetes APIを呼ぶクライアントであると説明する", "操作できる範囲はツールではなくRBACで決まり、TUIでも誤削除のリスクは同じと説明する"]],
-    [["AWS管理のControl Planeと利用者側の責任を区別する", "ノード・アドオン・アプリの更新や設定責任を挙げる"], ["管理主体と観察可能な範囲を比較する", "費用・制約・学習目的を判断条件に含める"]],
-    [["DB運用責任・バックアップ・障害対応の分離を説明する", "費用・AWS依存・接続設計とのトレードオフを挙げる"], ["DB接続失敗によりreadyが503になり得ると説明する", "liveはDB非依存でありスキーマの正常性は別確認と説明する"], ["chartのバージョンとvaluesを固定し、helm templateで生成されるリソースを確認すると説明する", "RBAC・Webhook・CRDなど権限や影響範囲の大きいリソースと、配布元の信頼性を確認する"]],
-    [["Gitを正本として継続的に差分を調整する方式とCIによる直接実行を区別する", "権限・ドリフト・復旧方法を比較する"], ["対象数・チーム・運用能力という判断条件を挙げる", "管理要素の追加コストも比較し一律に断定しない"], ["Helmはパッケージ化・配布・release管理、Kustomizeは自分のYAMLの環境差分に向くと説明する", "利用者・配布の有無・レビューのしやすさを判断条件に含める"], ["生成手順が二段になり、最終的なマニフェストの出所と差分を追いにくくなると説明する", "併用する場合は役割の分担と生成結果の確認方法を決めると説明する"]],
+    [
+        ["同一ノードに載ったレプリカがノード障害で同時に止まり得ると説明する", "2 ノードでも残る単一障害点（1 Pod の DB、port-forward、同一ホスト）を挙げる"],
+        ["上限は maxReplicas・指標・requests・ノードの空きで決まり、ノード台数とは直結しないと説明する", "置けない Pod は Pending になり、ノード追加は別の仕組みだと説明する"],
+        ["Liveness を DB 非依存にする理由として再起動の連鎖を説明する", "Startup と Readiness の役割と、DB 停止時に各 Probe が何を起こすかを区別する"],
+        ["requests の根拠（実測など）と、HPA の使用率の分母が requests であることに触れる", "CPU は throttling、memory は OOMKill という超過時の違いを区別する"],
+        ["drain など自発的な退避だけが対象と説明する", "ノード故障・直接削除・単一レプリカの DB では守れないことを区別する"],
+        ["maxSurge / maxUnavailable と容量・可用性のトレードオフを説明する", "undo で戻るもの（Pod テンプレート）と戻らないもの（DB のデータなど）を区別する"],
+        ["DoNotSchedule は Pending、ScheduleAnyway は偏りを許すという違いを説明する", "可用性要件に応じた選択の理由か、taint のあるノードの扱いに触れる"],
+    ],
+    [
+        ["Secret は base64 で暗号化ではなく、読める主体・exec できる主体は値を得られると説明する", "保存時暗号化・RBAC・監査など別の対策の範囲に触れる"],
+        ["人・アプリの Pod・調査ツールで必要な権限を分け、最小権限で説明する", "不要な Pod に ServiceAccount トークンを自動マウントしない理由を述べる"],
+        ["TUI の操作範囲はツールではなく資格情報に対する RBAC で決まると説明する", "読み取り専用の主体や運用で編集・削除を避ける理由に触れる"],
+        ["enforce は Pod を拒否し、warn・audit は警告・記録であることを区別する", "restricted を enforce にできる条件と、バージョン固定の意義に触れる"],
+        ["防げること（権限昇格・書き込み・不要な capability）と防げないこと（Secret の閲覧、アプリの脆弱性）を区別する", "イメージ変更とマニフェストで補う方式の判断基準（他 Phase への影響など）を述べる"],
+        ["遮断するのは CNI で、対応しない CNI では効かないと説明する", "許可と拒否の両方を実測で確かめ、タイムアウトと refused を見分けると述べる"],
+        ["名前解決・EndpointSlice・ポート・NetworkPolicy の順に切り分ける手順を示す", "kubelet の Probe は NetworkPolicy の影響を受けず、Ready のまま遮断され得ると説明する"],
+    ],
+    [
+        ["AMI 更新・パッチ・台数・脆弱性対応が利用者に残ると説明する", "EKS が担う範囲（Control Plane、作成やドレイン付き更新の支援）と区別する"],
+        ["Auto Mode ではノードやアドオンの管理も AWS 側に寄ると説明する", "見えなくなる運用と、増える費用・制約に触れる"],
+        ["料金・遅延・AZ 数・サービスの有無など複数の観点を挙げる", "選んだ region で料金を確認する必要を述べる"],
+        ["public を CIDR で制限するか private にするかの判断を示す", "kubectl・Terraform の経路と、IP が変わったときの影響に触れる"],
+        ["NAT の時間料金・データ処理料金と AZ 障害時の影響のトレードオフを述べる", "学習用途としての判断根拠を示す"],
+        ["ノードを private subnet に置く理由（直接の露出を避ける）を述べる", "ALB は public、ノードと DB は private という役割分担を説明する"],
+        ["ローカルと remote の選択肢と、機密を含むため Git に入れない点を述べる", "state を失うと destroy できなくなるリスクに触れる"],
+    ],
+    [
+        ["パッチ・バックアップ・フェイルオーバーの運用責任が AWS に移ると説明する", "費用・AWS 依存・ネットワーク設計という増えるものにも触れる"],
+        ["/health/ready が 503 になり Service の宛先から外れると説明する", "ALB の health check を / にするか /health/ready にするかの影響を比較する"],
+        ["生成物（RBAC・Webhook・Deployment・CRD・Secret）を helm template で読むと述べる", "出典・版・values の固定、IAM 権限、Webhook の failurePolicy のいずれかに触れる"],
+        ["private subnet とセキュリティグループ参照（ノード側からの 5432 のみ）を述べる", "VPC 全体や 0.0.0.0/0 に開けない理由を述べる"],
+        ["Secrets Manager で管理し、state や Git に平文を残さない点を述べる", "ローテーション時の追従（再取得・Pod の再作成）に触れる"],
+        ["Pod Identity で ServiceAccount 単位に IAM ロールを渡すと説明する", "ノードのロールに付ける方式と最小権限の観点で比較する"],
+        ["inbound-cidrs による許可 IP の制限と、短時間の検証用途に限ることを述べる", "Ingress を先に削除して ALB を消す順序と理由を述べる"],
+        ["pg_dump / pg_restore による論理移行を VPC 内の経路で行うと述べる", "自動バックアップ・PITR・スナップショットの違いと、復元は新しいインスタンスになる点に触れる"],
+    ],
+    [
+        ["GitOps は Git を正本に継続的に差分を調整する pull 型、CI からの apply は push 型と区別する", "認証情報の置き場所・drift の扱い・対象が増えたときの有利不利を比較する"],
+        ["Helm は配布・パッケージ化・release 管理、Kustomize は自分の YAML の環境差分に向くと説明する", "併用すると生成が二段になり出所と差分を追いにくくなることと、判断の基準を述べる"],
+        ["Git に置けない値の扱い方（事前作成、Sealed Secrets、External Secrets など）を挙げる", "選んだ方式で残る課題（手作業、ローテーション、鍵の管理など）を述べる"],
+        ["SLI の分子・分母・除外条件（ヘルスチェックなど）と期間を明示する", "測定前に達成と断言せず、目標値の根拠を述べる"],
+        ["承認を本番反映の直前に置き、承認者が確認する内容（差分、テスト結果、対象）を述べる", "OIDC の信頼条件をリポジトリ・ブランチ・environment で絞ると説明する"],
+        ["リクエスト率・エラー率・p95 など、どの指標で何が分かるかを説明する", "メトリクスで分からないとき（Nginx の 504/502 など）に使うログ・イベントを挙げる"],
+        ["予算通知・Cost Explorer による確認と、削除の手順・タグによる点検を組み合わせる", "予算通知は課金停止を保証しないなど、防げないことを述べる"],
+    ],
+    [
+        ["ECS と EKS で必要な構成要素を実際に挙げて比べる", "要件の実現に必要な最小構成と、学習済みの経験を区別する"],
+        ["起動タイプ・ノード管理方式ごとに OS・パッチ・容量・アドオンの担当を区別する", "EKS でもノード運用の責任が残り得る点を方式別に説明する"],
+        ["Task/Pod の増減と Node/容量の増減の関係を両案で説明する", "追従が遅れる条件に触れる"],
+        ["ノード・AZ・DB の障害を分けて対応を書く", "RDS の障害の影響は両案で共通であることを踏まえる"],
+        ["IAM（タスクロール / Pod Identity）・ネットワーク・コンテナ権限・監査を比べる", "実行基盤の権限とアプリの権限を区別する"],
+        ["region・時間・構成・調査日をそろえた見積もり条件を記録する", "運用人件費と移行費用を仮定を明示して含める"],
+        ["GitOps・共通基盤・エコシステムとチームの学習負荷を両案で比べる", "自分の Phase 8 の観察を根拠にし、未観察ならそう書く"],
+        ["将来のサービス追加・移植性・既存技術が結論に与える影響を条件付きで書く", "どちらも無条件の正解とせず、判断が変わる条件を示す"],
+    ],
 ]
 
 
 def build():
-    design = read(DESIGN)
     lab_texts = [read(path) for path in LABS]
-    phase_texts = {
-        int(match.group(1)): match.group(2)
-        for match in re.finditer(r"^### Phase (\d+) — [^\n]*\n(.*?)(?=^### Phase |^## 7\.|\Z)", design, re.M | re.S)
-    }
     phases = []
 
     def add(pid, slug, title, subtitle, level, minutes, summary, concepts, sections, graph):
-        text = lab_texts[pid] if pid < IMPLEMENTED else phase_texts[pid]
-        if pid < IMPLEMENTED:
-            goals = re.findall(r"^- (.+)$", heading_body(text, "学習目標"), re.M)
-            prompts = lab_questions(text)
-            labels = memo_labels(text)
-            rubrics = RUBRICS[pid]
-            if pid == 1:
-                sections.extend(practice_sections(
-                    text, "practice-setup",
-                    ["Phase 1: Compose 上で WorkBoard を起動する"],
-                ))
+        text = lab_texts[pid]
+        goals = re.findall(r"^- (.+)$", heading_body(text, "学習目標"), re.M)
+        prompts = lab_questions(text)
+        labels = memo_labels(text)
+        rubrics = RUBRICS[pid]
+        if pid == 1:
             sections.extend(practice_sections(
-                text, "practice-lab",
-                ["前提条件", "検証コマンド・期待結果", "故障実験", "失敗時に確認すること", "Linux / macOS / WSL での前提", "後片付け"],
+                text, "practice-setup",
+                ["Phase 1: Compose 上で WorkBoard を起動する"],
             ))
-        elif pid < 9:
-            learned = re.search(r"\*\*学ぶこと:\*\* (.+)", text).group(1)
-            goals = [learned, "実装前に設計条件と検証方法を説明できる"]
-            question_line = re.search(r"\*\*設計の問い:\*\* (.+)", text).group(1)
-            prompts = [q.strip() for q in re.findall(r"[^？]+？", question_line)]
-            rubrics = RUBRICS[pid]
-            labels = ["理解した概念", "想定する構成と採用理由", "必要な実験と期待結果", "疑問・未解決事項"]
-        else:
-            goals = ["ECSとEKSを同じ要件で比較できる", "採用理由・反対案・不確実性を根拠と共に残せる"]
-            pairs = [
-                (axis, question)
-                for axis, question in re.findall(r"^\| ([^|]+) \| ([^|]+) \|$", text, re.M)
-                if axis.strip() not in {"軸", "---"}
-            ]
-            prompts = [f"{axis.strip()}: {question.strip()}" for axis, question in pairs]
-            rubrics = [["ECSとEKSを同じ条件で比較する", f"{axis.strip()}について構成・運用の違いを根拠と共に説明する", "前提と不確実性を明示しEKSを無条件の正解としない"] for axis, _ in pairs]
-            labels = ["想定要件", "比較結果と根拠", "採用案・反対案", "不確実性と追加調査"]
-        if pid >= IMPLEMENTED:
-            sections.insert(0, section("preview", "この章は予習です", f"Phase {IMPLEMENTED}以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。", "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"))
+        sections.extend(practice_sections(
+            text, "practice-lab",
+            ["前提条件", "検証コマンド・期待結果", "検証方法・期待結果", "故障実験", "失敗時に確認すること", "Linux / macOS / WSL での前提", "後片付け"],
+        ))
         assert len(prompts) == len(rubrics), (pid, prompts)
         phases.append(dict(
             id=pid, slug=slug, title=title, subtitle=subtitle, level=level,
-            implemented=pid < IMPLEMENTED, estimatedMinutes=minutes, summary=summary,
+            implemented=True, estimatedMinutes=minutes, summary=summary,
             goals=goals, concepts=concepts, sections=sections, diagram=graph,
             questions=[dict(id=f"q{i}", prompt=prompt, rubric=rubric) for i, (prompt, rubric) in enumerate(zip(prompts, rubrics), 1)],
             memoFields=[dict(id=f"m{i}", label=label) for i, label in enumerate(labels, 1)],
-            sources=[dict(label="一次設計書", path=DESIGN)] + ([dict(label=f"Lab {pid:02d} 原本", path=LABS[pid])] if pid < IMPLEMENTED else []),
+            sources=[dict(label="一次設計書", path=DESIGN), dict(label=f"Lab {pid:02d} 原本", path=LABS[pid])],
         ))
 
     add(0, "foundation", "学習の土台を整える", "環境確認と設計判断の記録", "foundation", 25,
@@ -407,70 +438,100 @@ def build():
                 step("読める主体を確認する", "管理者とdefault ServiceAccountの違いを見ます。", command_from(lab_texts[3], "kubectl --context kind-workboard-phase3 -n workboard auth can-i get secrets --as"), "管理者は yes、default ServiceAccount は no。")]),
         ], phase_diagram(3))
 
-    add_previews(add)
+    add_advanced(add, lab_texts)
     validate(phases)
     return {"title": "WorkBoardで学ぶ Kubernetes / EKS", "phases": phases}
 
 
-def add_previews(add):
-    add(4, "scaling", "増やす・更新する・耐える", "予習 / Probe・HPA・配置制御", "local", 35,
-        "レプリカ数だけでは語れない可用性と、計測に基づく調整を学びます。", [
-            concept("Probe", "生存・受付可否・起動の確認を目的ごとに分けます。", "呼吸確認・受付状況・開店準備の別々の点検"),
-            concept("HPA", "指標をもとにワークロードのレプリカ数を調整します。", "注文数に応じた窓口人数の調整"),
-            concept("requests / limits", "配置に必要な資源の見積もりと、利用の上限を設定します。", "予約した席数と使用可能な広さ"),
+AWS_NOTICE = "AWS の有料リソースを作るコマンドを含みます。ポータルはコマンドを実行しません。README の開始条件（明示的な承認・見積もり・予算通知・削除手順の確認）を満たしてから、自分のターミナルで実行してください。"
+
+
+def add_advanced(add, lab_texts):
+    add(4, "scaling", "増やす・更新する・耐える", "kind 3 ノード・Probe・HPA・PDB・配置制御", "local", 80,
+        "レプリカ数だけでは語れない可用性と、計測に基づく調整を、3 ノードの kind で観察します。", [
+            concept("Liveness と Readiness", "Liveness はプロセスが動いているかを見て、失敗すると再起動します。Readiness は今リクエストを受けられるかを見て、失敗すると Service の宛先から外れるだけです。", "店員が元気かの確認と、今レジに立てるかの確認"),
+            concept("requests / limits", "requests は配置と HPA の使用率の基準になる予約、limits は上限です。CPU は超えると遅くなり、memory は超えると OOMKill されます。", "予約した席数と店の定員"),
+            concept("HPA", "使用率を requests で割った値が目標より高ければレプリカを増やします。上限は maxReplicas とノードの空きで決まり、ノード台数ではありません。", "混み具合を見てレジの台数を変える店長"),
+            concept("PodDisruptionBudget", "drain などの自発的な退避で、最低何 Pod を残すかを決めます。ノード故障や Pod の直接削除は止められません。", "同時に休めるのは 1 人までという休暇ルール"),
         ], [
-            section("availability", "同じ場所に増やすだけでは足りない", "APIを3 Podにしても同じNodeに載っていれば、そのNodeの故障で全て止まり得ます。ノードやAZへの分散、DBの単一障害点、更新時に残す受付能力を組み合わせて考えます。\n\nPDBは自発的な中断の許容数を扱う仕組みです。突然のNode故障まで防止する保証ではありません。"),
-            section("measurement", "測ってから数値を決める", "HPAのための指標を得るにはmetrics-server等の前提が必要です。CPU負荷・応答時間・Pod数・イベントを同じ時間軸で記録して判断します。\n\nRolling Updateとrollbackでは、更新中のHTTP応答と残っているPod数を観察します。動いていない実験の復旧時間を推測で記録しないことが大切です。"),
+            section("availability", "同じ場所に増やすだけでは足りない", "新しい専用クラスター workboard-phase4（control-plane 1 + worker 2）で行います。Phase 3 の workboard-phase3 は変更しません。WorkBoard は 8082 番です。\n\nAPI を 3 Pod にしても同じ Node に載っていれば、その Node の故障で全て止まり得ます。topologySpreadConstraints でノードに分散し、PDB で drain 中に残す数を決めます。DB は 1 Pod のままなので単一障害点として残ります。", "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。", [
+                step("専用クラスターを作る", "metrics-server の導入と準備完了待ちまで行います。既存のクラスターは変更しません。", command_from(lab_texts[4], "powershell -NoProfile -File phases/04-reliability-scaling/scripts/up.ps1"), "Node 3 台が Ready、API 3/3、Web 2/2、HPA が CPU 使用率を表示する。", command_from(lab_texts[4], "bash phases/04-reliability-scaling/scripts/up.sh")),
+                step("ノードを退避させる", "PDB が退避の速さをどう制限するかを観察します。", command_from(lab_texts[4], "kubectl --context kind-workboard-phase4 drain"), "PDB を満たす範囲で Pod が順に退避し、残りのノードで Ready になる。")]),
+            section("measurement", "測ってから数値を決める", "負荷生成 Pod で API に負荷をかけ、HPA が Pod を増やし、負荷を止めると戻る様子を記録します。Rolling Update と rollback では、更新中の HTTP 応答と残っている Pod 数を watch-http で同じ時間軸に並べます。\n\nport-forward は Service を指定しても 1 つの Web Pod に固定されます。その Pod が退避されると計測自体が途切れるため、結果を読むときに区別します。", steps=[
+                step("負荷をかけて HPA を観察する", "自分のクラスター内の API Service だけを対象にします。", command_from(lab_texts[4], "kubectl --context kind-workboard-phase4 apply -f phases/04-reliability-scaling/load/load-generator.yaml"), "CPU 使用率が目標を超えると API の Pod 数が増え、負荷停止後に戻る。"),
+                step("更新を巻き戻す", "不正なイメージで更新した後に戻します。", command_from(lab_texts[4], "kubectl --context kind-workboard-phase4 -n workboard rollout undo deployment/workboard-api"), "旧い ReplicaSet の Pod に戻り、更新中も Ready な Pod が残る。")]),
         ], phase_diagram(4))
 
-    add(5, "security", "権限と通信を絞る", "予習 / RBAC・NetworkPolicy・診断", "local", 35,
-        "誰が何をできるかと、どこへ通信できるかを別々に考えます。", [
-            concept("RBAC", "Kubernetes APIへの操作権限を役割と関連付けます。", "役職ごとの操作許可証"),
-            concept("ServiceAccount", "Pod内の処理がKubernetes APIを利用するときの主体です。", "作業員本人とは別の設備用身分証"),
-            concept("NetworkPolicy", "対応CNIのもとでPod間等の通信許可を制御します。", "部屋の間に置く通行ルール"),
+    add(5, "security", "権限と通信を絞る", "kind + Calico・RBAC・NetworkPolicy・PSS・Runbook", "local", 80,
+        "誰が何をできるかと、どこへ通信できるかを別々に設定し、許可と拒否の両方を確かめます。", [
+            concept("Pod Security Standards", "Namespace のラベルで、Pod の作成時に root や特権などの危険な設定を検査し、拒否・警告・監査します。enforce は Pod にだけ効き、warn と audit は Deployment などにも効きます。", "建物の入口の持ち物検査"),
+            concept("RBAC", "Role は何ができるか、RoleBinding は誰にそれを与えるかを決めます。Role があっても Binding がなければ権限はありません。", "鍵のリストと、鍵を渡す相手の名簿"),
+            concept("NetworkPolicy と CNI", "NetworkPolicy は通信の許可ルールを書く API オブジェクトで、実際に遮断するのは CNI です。対応しない CNI では作成できても効きません。", "規則書と、それを守らせる警備員"),
+            concept("securityContext", "非 root、読み取り専用のルート、capability の削除、権限昇格の禁止で、侵入されたときの影響を小さくします。Secret を読める人の問題は別です。", "包丁は使えても倉庫の鍵は持たない料理人"),
         ], [
-            section("boundaries", "権限と通信は別の境界", "RBACでAPI操作を制限しても、アプリの通信まで自動的に閉じるわけではありません。NetworkPolicyを定義しても、CNIが処理しなければ期待どおりに遮断されません。\n\nSecretの読み取り権限、実行ユーザー、コンテナ権限、イメージを合わせて考えます。"),
-            section("diagnose", "症状から層を切り分ける", "イメージ取得失敗ならイベントとタグ、通信失敗ならselector・EndpointSlice・DNS、権限不足なら主体とRoleBindingを追います。\n\n実装時には再現条件・観察したログ・原因・復旧手順をRunbookに残す計画です。通信を拒否できたという結論には、許可と拒否の両方の試験が必要です。"),
+            section("boundaries", "権限と通信は別の境界", "新しい専用クラスター workboard-phase5 は既定の CNI を外し、Calico を入れて NetworkPolicy を有効にします。WorkBoard は 8083 番です。\n\nRBAC で API 操作を制限しても、アプリの通信まで閉じるわけではありません。default deny に必要な通信だけを足し、許可した経路が通ることと、許可していない経路がタイムアウトすることの両方を確かめます。", "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。", [
+                step("専用クラスターを作る", "Calico の導入と Node の Ready 待ちまで行います。", command_from(lab_texts[5], "powershell -NoProfile -File phases/05-security-and-failure/scripts/up.ps1"), "Calico が Running、StatefulSet 1/1、Web/API 1/1、NetworkPolicy が作られる。", command_from(lab_texts[5], "bash phases/05-security-and-failure/scripts/up.sh")),
+                step("読み取り専用の主体を試す", "Secret を読めないことを確かめます。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 -n workboard auth can-i get secrets --as=system:serviceaccount:workboard:workboard-viewer"), "no が返る。"),
+                step("拒否される通信を試す", "Web から DB への直接接続は許可していません。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-web -- nc -zv -w 3 workboard-postgres 5432"), "接続がタイムアウトする。"),
+                step("違反する Pod を作る", "restricted に違反する Pod の作成が拒否されるかを見ます。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 -n workboard apply -f phases/05-security-and-failure/experiments/violating-pod.yaml"), "Forbidden と違反項目が表示される。")]),
+            section("diagnose", "症状から層を切り分ける", "イメージ取得失敗ならイベントとタグ、通信失敗なら名前解決・EndpointSlice・ポート・NetworkPolicy、権限不足なら主体と RoleBinding を追います。runbook.md に、症状・観察コマンド・原因・復旧・再発防止を障害ごとにまとめてあります。\n\nPod が Ready でも、kubelet の Probe は NetworkPolicy の影響を受けないため、アプリ間の通信は遮断され得ます。", steps=[
+                step("Service の転送先を見る", "selector の誤りでは転送先が空になります。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 -n workboard get endpointslices -l kubernetes.io/service-name=workboard-api"), "正常時は API Pod のアドレスが並ぶ。"),
+                step("memory 不足を再現する", "low-memory-limit の overlay で OOMKilled を起こします。", command_from(lab_texts[5], "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/experiments/low-memory-limit"), "Pod が OOMKilled（Exit 137）で再起動を繰り返す。")]),
         ], phase_diagram(5))
 
-    add(6, "eks", "AWS上の責任を分ける", "予習 / VPC・EKS・Node・Terraform", "cloud", 40,
-        "マネージドサービスでも残る責任と、費用・公開範囲を設計します。", [
-            concept("EKS", "AWS管理のKubernetes Control Planeを利用するサービスです。", "建物管理を任せても利用者の仕事は残る職場"),
-            concept("Managed Node Group", "EC2ノード群の管理を支援します。利用者には構成や更新の判断が残ります。", "設備の交換を支援する管理契約"),
-            concept("Terraform", "インフラの望む構成と差分をコードで扱います。", "建設図面と工事前の差分表"),
+    add(6, "eks", "AWS上の責任を分ける", "Terraform・VPC・EKS・Managed Node Group・ECR", "cloud", 120,
+        "マネージドサービスでも残る責任と、費用・公開範囲を設計し、承認を得てから構築します。", [
+            concept("責任共有（Managed Node Group）", "ノードの作成やドレイン付き更新は EKS が支援しますが、AMI の切り替え・台数・脆弱性対応は利用者の責任です。", "賃貸マンションの管理会社と入居者"),
+            concept("public/private subnet と NAT", "private subnet のノードはインターネットから直接見えず、外向きの通信やイメージ取得は NAT を通ります。", "受付だけが外に面した建物と社員用の通用口"),
+            concept("access entries", "IAM の権限とは別に、Kubernetes 側の管理権限を IAM 主体へ明示的に付けます。", "建物に入る許可と金庫室に入る許可"),
+            concept("plan と state", "plan は変更の予告、state は Terraform が管理している資産の台帳です。台帳を失うと削除もできなくなります。", "工事の見積書と設備の管理台帳"),
         ], [
-            section("responsibility", "まず標準EKSで境界を見る", "設計書は最初に標準EKSとManaged Node Groupsを使い、Control Plane・Node・アドオン・アプリの担当範囲を観察する方針です。Auto Modeは後で管理主体や費用を比較する課題です。\n\nAWSに任せる部分と、自分で監視・更新・設定する部分を表にしてみましょう。"),
-            section("cost", "構築より前に決める条件", "region、AZ、Node、NAT、endpointのアクセス範囲、利用時間、削除後に残る資産を整理します。EKS料金だけでなくEC2・ALB・RDS・NAT等も見積もる必要があります。\n\n開始条件は利用の明示承認、見積もり確認、予算通知、クリーンアップ手順のレビューです。予算通知は課金停止の保証ではありません。", "この章には実行コマンドを掲載していません。まだTerraform構成もAWSリソースも作成していません。"),
+            section("responsibility", "まず標準 EKS で境界を見る", "Terraform は AWS provider のリソースで VPC・EKS・Managed Node Group・IAM・ECR を明示的に書いています。community module を使わないのは、構成要素を一つずつ読むためです。\n\nAPI endpoint は public のまま CIDR で制限し、0.0.0.0/0 は拒否します。WorkBoard は ECR のイメージで動かし、入口は port-forward（8086 番）だけです。DB は Phase 7 で RDS に移すため、ここでは使い捨ての Postgres です。", AWS_NOTICE, [
+                step("適用前に定義を検証する", "AWS に接続しない検証です。", command_from(lab_texts[6], "terraform -chdir=phases/06-eks-foundation/terraform validate"), "Success! と表示される。"),
+                step("差分を読む", "認証情報を使い AWS に問い合わせます（作成はしません）。作られるリソースと料金要因を記録します。", command_from(lab_texts[6], "terraform -chdir=phases/06-eks-foundation/terraform plan"), "VPC・subnet・NAT・EKS・ノードグループ・ECR などの追加が並ぶ。"),
+                step("ノードを観察する", "承認して apply した後に、ノードの配置と OS を確認します。", command_from(lab_texts[6], "kubectl get nodes -o wide"), "2 台のノードが private の IP で Ready になる。")]),
+            section("cost", "費用と後片付けを先に決める", "cost-estimate.md に region・稼働時間・台数・AZ 構成をそろえた見積もりの観点があります。料金は公式ページで確認し、確認できない値は要確認のまま残します。予算通知は課金停止の保証ではありません。\n\naws-cleanup.md に、destroy の順序と、ALB・ENI・EBS・NAT・EIP・ECR・ロググループなど残り得る資産の点検手順があります。", "削除は元に戻せません。aws-cleanup.md の手順で、対象と消えるデータを確認してから自分で実行してください。"),
         ], phase_diagram(6))
 
-    add(7, "integration", "AWSサービスをつなぐ", "予習 / ALB・RDS・Pod Identity", "cloud", 35,
-        "入口・データ・権限をマネージドサービスとどう分担するか考えます。", [
-            concept("ALB / Controller", "Ingressの定義をControllerが処理してALBを管理します。", "受付方針と、それを設備へ反映する管理者"),
-            concept("RDS", "DBの運用機能をAWSへ任せる選択肢です。接続やデータ保護の設計は必要です。", "保管業務を専門業者と分担する倉庫"),
-            concept("Pod Identity", "PodからAWSを呼ぶ際に、限定したIAM権限を渡す仕組みです。", "用途を絞った作業用の許可証"),
+    add(7, "integration", "AWSサービスをつなぐ", "RDS・ALB・AWS Load Balancer Controller・Pod Identity・Helm", "cloud", 120,
+        "入口・データ・権限をマネージドサービスとどう分担するかを決め、公開範囲を絞って確かめます。", [
+            concept("RDS（DB の外部化）", "パッチ・バックアップ・フェイルオーバーを AWS に任せる代わりに、費用と AWS 依存が増えます。接続やデータ保護の設計は残ります。", "自炊をやめて給食センターと契約する"),
+            concept("Pod Identity", "特定の Namespace と ServiceAccount だけに IAM ロールを結び付け、一時的な認証情報を渡します。", "社員証ではなく部署限定の入館カード"),
+            concept("Helm（chart の利用者として）", "helm template で中身を読んでから、release 単位で install・history・rollback します。", "組み立て説明書を先に読み、作業を番号付きで記録する"),
+            concept("Ingress と ALB", "Ingress は API オブジェクトで、実際に ALB を作るのは Controller です。公開は許可した IP に限り、検証後は Ingress を先に消します。", "注文票と、それを受けて店を開ける店長"),
         ], [
-            section("path", "入口とDBをクラスターの外へ", "ALB→Web→API→RDSという経路を設計します。ALBのIngressを扱うAWS Load Balancer Controllerと、IngressというAPIリソースは別です。\n\nRDSはDB運用を分担できますが、費用・AWS依存・ネットワーク接続・移行・復旧の検討が増えます。バックアップの取得だけでなく復元方法まで比較します。"),
-            section("identity", "公開と権限を限定する", "認証のないWorkBoardを恒常的にインターネットへ公開しない方針です。短時間の検証でも公開範囲・セキュリティグループ・後片付けを先に決めます。\n\nCSVをS3に置く発展課題では、Pod Identityで必要な操作だけを許可する計画です。S3やWorkerは任意の発展課題で、MVPの必須構成ではありません。"),
+            section("path", "入口とDBをクラスターの外へ", "Phase 6 のクラスターが稼働していることが前提です。Phase 7 の Terraform は Phase 6 のファイルや state を読まず、クラスター名などの変数と data source で既存の環境を参照し、RDS・Pod Identity Agent・Controller 用の IAM ロールを足します。\n\nRDS のマスターパスワードは Secrets Manager が管理し、state にも Git にも平文を残しません。接続は PGSSLMODE=require で TLS を使います。ALB の health check は / で、DB 障害で全ターゲットが外れないようにしています。", AWS_NOTICE, [
+                step("chart の生成物を読む", "クラスターに適用せず、作られるリソースをファイルに書き出します。", command_from(lab_texts[7], "helm template aws-load-balancer-controller"), "ServiceAccount・RBAC・Deployment・Webhook・CRD などが書き出される。"),
+                step("Ingress の状態を見る", "ALB が作られ、許可した IP だけに公開されているかを確認します。", command_from(lab_texts[7], "kubectl -n workboard describe ingress workboard"), "ADDRESS に ALB の DNS 名が入り、イベントにエラーがない。")]),
+            section("identity", "公開と権限を限定する", "認証のない WorkBoard を恒常的にインターネットへ公開しません。inbound-cidrs で学習者の IP に絞り、検証が終わったら Ingress を削除して ALB を消します。\n\nhelm history で release の履歴を見て、rollback の単位を確かめます。S3 への CSV エクスポートと Redis + Worker は任意の発展課題で、README に設計の観点だけを置いています。", AWS_NOTICE, [
+                step("release の履歴を見る", "rollback で戻る単位を確認します。", command_from(lab_texts[7], "helm history aws-load-balancer-controller -n kube-system"), "revision ごとの状態と chart の版が並ぶ。"),
+                step("公開を終える", "ALB を先に消してから、Terraform の削除に進みます。", command_from(lab_texts[7], "kubectl -n workboard delete ingress workboard"), "しばらくして ALB とそのセキュリティグループが消える。")]),
         ], phase_diagram(7))
 
-    add(8, "pipeline", "変更と運用をつなぐ", "予習 / CI・CD・GitOps・SLI", "review", 35,
-        "変更を安全に届け、観察し、戻すまでを一つの流れで考えます。", [
-            concept("CI / CD", "変更の検査と、環境への反映を分けて設計します。", "出荷検査と配送の工程"),
-            concept("GitOps", "Gitの定義と実環境の差を継続的に調整する運用方式です。", "正本の台帳と現物を定期照合する係"),
-            concept("SLI / SLO", "利用者視点の指標と、その目標値を分けて定義します。", "測った所要時間と約束する所要時間"),
+    add(8, "pipeline", "変更と運用をつなぐ", "CI/CD・Argo CD・Prometheus・SLO", "review", 100,
+        "変更を安全に届け、観察し、戻すまでを一つの流れにします。GitOps と監視は kind で試します。", [
+            concept("CI / CD", "CI はテスト・ビルド・マニフェストの検証、CD は環境への反映です。CD は手動承認制にし、AWS へは OIDC の一時認証で接続します。", "出荷検査と配送の工程"),
+            concept("GitOps（Argo CD）", "Git の定義と実環境の差を検出し、同期で Git の状態に合わせます。戻すときは Git を revert します。", "正本の台帳と現物を照合する係"),
+            concept("Prometheus と PromQL", "API の /metrics から定期的に値を集め、リクエスト率・エラー率・p95 応答時間を式で求めます。", "定期的に検針して使用量を計算する係"),
+            concept("SLI / SLO", "SLI は利用者から見た指標、SLO はその目標値です。分子・分母・除外条件・期間を決め、測る前に達成とは言いません。", "測った所要時間と約束する所要時間"),
         ], [
-            section("delivery", "テスト・反映・復旧を切り分ける", "CIでlint・APIテスト・イメージビルド・構文確認を行い、CDは最初に手動承認制とする計画です。GitOpsは対象数や運用能力を踏まえて方式比較後に追加します。\n\n失敗した変更をどこで止めるか、認証情報をどこへ渡すか、どの版へ戻すかも設計対象です。"),
-            section("observe", "測った事実で改善する", "応答時間、HTTPエラー率、再起動、資源使用量を観察します。成功率やp95応答時間をSLIとし、期間と母数を含めて目標を決めます。\n\n測定前のSLO達成宣言や、予算通知だけで費用が止まるという判断は避けます。運用・復旧・コストを同じ改善サイクルへ戻します。"),
+            section("delivery", "テスト・反映・復旧を切り分ける", ".github/workflows/ci.yaml は push と pull request でテスト・ビルド・kustomize・Terraform・スクリプトを検証します。cd.yaml は手動実行だけで、GitHub の environment の承認を待ってから ECR に push し EKS に適用します。AWS 側の準備をするまでは動きません。\n\nArgo CD は専用クラスター workboard-phase8 で試します。同期対象は GitHub 上のリポジトリなので、自分の fork に push するまで同期できません。DB のパスワードは Git に置かず、構築スクリプトが Secret を事前に作ります。", "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。", [
+                step("専用クラスターを作る", "WorkBoard・Argo CD・Prometheus を導入します。", command_from(lab_texts[8], "powershell -NoProfile -File phases/08-devops-observability/scripts/up.ps1"), "API 3/3、Web 2/2、Prometheus と Argo CD の Pod が Running。", command_from(lab_texts[8], "bash phases/08-devops-observability/scripts/up.sh")),
+                step("同期の状態を見る", "push 前は同期できないことも観察結果です。", command_from(lab_texts[8], "kubectl --context kind-workboard-phase8 -n argocd get application workboard"), "push 前は Unknown（ComparisonError）、push 後は Synced / Healthy。"),
+                step("手動の変更で drift を作る", "Git と異なる状態にして、Argo CD が差分を検出するかを見ます。", command_from(lab_texts[8], "kubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=5"), "Application が OutOfSync になり、同期で 2 Pod に戻る。")]),
+            section("observe", "測った事実で改善する", "Prometheus は kubernetes_sd で API の Pod を見つけ、/metrics を集めます。slo.md に、ヘルスチェックを除いた成功率と p95 応答時間の定義があります。\n\nNginx が返す 504/502 は API に届かないため、API のメトリクスには現れません。メトリクスで分からないことは、ログやイベントで補います。", steps=[
+                step("Prometheus を開く", "WorkBoard とは別のポートです。", command_from(lab_texts[8], "kubectl --context kind-workboard-phase8 -n monitoring port-forward --address 127.0.0.1 svc/prometheus 8087:9090"), "http://localhost:8087 で Prometheus が開く。"),
+                step("リクエストを流し続ける", "応答と時刻を記録し、PromQL の値と比べます。", command_from(lab_texts[8], "powershell -NoProfile -File phases/08-devops-observability/scripts/watch-http.ps1"), "時刻・ステータス・秒数が一定間隔で表示される。", command_from(lab_texts[8], "bash phases/08-devops-observability/scripts/watch-http.sh"))]),
         ], phase_diagram(8))
 
-    add(9, "comparison", "ECSとEKSを選び分ける", "予習 / 要件から採用判断へ", "review", 40,
-        "EKS採用を正解にせず、同じ要件と根拠で選択肢を比べます。", [
-            concept("比較条件", "規模・チーム・可用性・移植性などをそろえて比較します。", "同じ荷物と距離で運送方法を選ぶ"),
-            concept("運用負荷", "導入後に更新・障害対応・監視を続けるための負担です。", "購入費とは別に必要な維持費と手間"),
-            concept("不確実性", "未測定・未確定の前提を明示し、追加調査へつなげます。", "見積もりの根拠と未確定欄"),
+    add(9, "comparison", "ECSとEKSを選び分ける", "同じ要件で採用判断を書く", "review", 90,
+        "EKS 採用を正解にせず、同じ要件・同じ条件・根拠で選択肢を比べます。", [
+            concept("同一条件での比較", "要件・region・稼働時間・構成・調査日をそろえて ECS 案と EKS 案を評価します。条件の違う数字は比べません。", "同じ距離・同じ荷物で電車とバスを比べる"),
+            concept("責任共有と運用人件費", "マネージドの範囲が違えば、自分たちが担うパッチ・容量・アドオンの工数が変わります。利用料に加え、人の時間と学習負担もコストです。", "家賃が安くても管理を全部自分でやる物件"),
+            concept("判断が変わる条件", "結論を一つの正解にせず、どの仮定が変わると逆転するかを残します。反対案を最も有利な条件で擁護して確かめます。", "雨なら中止と条件を付けた予定"),
         ], [
-            section("scenario", "同じサービス要件で比較する", "設計書の仮定は、月間数十万リクエスト規模の社内タスク管理を少人数で運用し、将来複数サービスが加わる可能性がある状況です。これはユーザーの実要件ではなく、比較のための課題シナリオです。\n\n初期構築、運用責任、スケール、可用性、セキュリティ、コスト、開発体験、長期戦略を比べます。"),
-            section("decision", "採用案を反対案と一緒に書く", "採用案だけでなく、もう一方を選ばない理由と、その判断が変わる条件も残します。既存技術や組織の習熟度も要件の一部です。\n\n料金の定量比較はregion・時間・構成・調査日をそろえて公式情報を確認する必要があります。この予習教材では現行料金を断定していません。"),
+            section("scenario", "同じサービス要件で比較する", "ecs-vs-eks.md の課題シナリオは、月間数十万リクエスト規模の社内タスク管理を少人数で運用し、将来複数サービスが加わる可能性がある状況です。これはユーザーの実要件ではなく、比較のための仮定です。\n\narchitecture.md で同じ WorkBoard を ECS と EKS に載せた構成を比べ、Phase 1〜8 で観察したことを根拠として使います。このラボは AWS もクラスターも操作しません。"),
+            section("decision", "採用案を反対案と一緒に書く", "採用案だけでなく、もう一方を選ばない理由と、その判断が変わる条件も残します。既存技術や組織の習熟度も要件の一部です。\n\n料金は AWS Pricing Calculator と公式料金ページで、region・時間・構成・調査日をそろえて自分で確認します。教材には料金の値を載せていません。"),
         ], phase_diagram(9))
 
 
@@ -499,21 +560,19 @@ def validate_diagram(diagram):
 def validate(phases):
     assert [phase["id"] for phase in phases] == list(range(10))
     for phase in phases:
-        assert phase["implemented"] == (phase["id"] < IMPLEMENTED)
+        assert phase["implemented"]
         assert phase["goals"] and phase["questions"] and phase["memoFields"]
         assert all(q["prompt"] and q["rubric"] for q in phase["questions"])
         assert all((ROOT / source["path"]).is_file() for source in phase["sources"])
         validate_diagram(phase["diagram"])
-        if phase["id"] >= IMPLEMENTED:
-            assert not any(s.get("steps") for s in phase["sections"])
-        else:
-            practice = [s for s in phase["sections"] if s.get("kind") == "practice"]
-            assert practice and any(s.get("steps") for s in practice)
-            assert len({s["id"] for s in phase["sections"]}) == len(phase["sections"])
-            assert all(not any(word in s["title"] for word in ("学習メモ", "回答", "実装時")) for s in practice)
+        practice = [s for s in phase["sections"] if s.get("kind") == "practice"]
+        # Phase 9 は AWS もクラスターも操作しない机上の比較で、実行コマンドがない。
+        assert practice and (phase["id"] == 9 or any(s.get("steps") for s in practice))
+        assert len({s["id"] for s in phase["sections"]}) == len(phase["sections"])
+        assert all(not any(word in s["title"] for word in ("学習メモ", "回答", "実装時")) for s in practice)
 
 
 if __name__ == "__main__":
     output = Path(__file__).with_name("curriculum.json")
     output.write_text(json.dumps(build(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print("教材を生成しました: Phase 0〜9 / 既存ラボは読み取りのみ")
+    print("教材を生成しました: Phase 0〜9 / ラボは読み取りのみ")

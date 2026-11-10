@@ -2204,54 +2204,374 @@
       "id": 4,
       "slug": "scaling",
       "title": "増やす・更新する・耐える",
-      "subtitle": "予習 / Probe・HPA・配置制御",
+      "subtitle": "kind 3 ノード・Probe・HPA・PDB・配置制御",
       "level": "local",
-      "implemented": false,
-      "estimatedMinutes": 35,
-      "summary": "レプリカ数だけでは語れない可用性と、計測に基づく調整を学びます。",
+      "implemented": true,
+      "estimatedMinutes": 80,
+      "summary": "レプリカ数だけでは語れない可用性と、計測に基づく調整を、3 ノードの kind で観察します。",
       "goals": [
-        "Liveness / Readiness / Startup probes、resource requests/limits、Rolling Update、HPA、PDB、Pod 配置制御。",
-        "実装前に設計条件と検証方法を説明できる"
+        "Startup・Liveness・Readiness の 3 つの Probe を使い分け、DB 障害時にどの Probe が何を引き起こすかを説明する。",
+        "requests と limits の意味、QoS、HPA が使う CPU 使用率の基準を、実測値と合わせて説明する。",
+        "Rolling Update の `maxSurge` / `maxUnavailable`、新しい Pod が Ready にならない場合の挙動、`kubectl rollout undo` の効果を観察する。",
+        "HPA と metrics-server で CPU 負荷に応じた増減を観察し、増やせる範囲を決めるものを説明する。",
+        "複数ノードで `topologySpreadConstraints` と PodDisruptionBudget の効果を観察し、レプリカ数が多くても残る単一障害点を説明する。",
+        "障害前後の Pod 数・HTTP 応答・イベント・復旧時間を記録する。"
       ],
       "concepts": [
         {
-          "term": "Probe",
-          "description": "生存・受付可否・起動の確認を目的ごとに分けます。",
-          "analogy": "呼吸確認・受付状況・開店準備の別々の点検"
-        },
-        {
-          "term": "HPA",
-          "description": "指標をもとにワークロードのレプリカ数を調整します。",
-          "analogy": "注文数に応じた窓口人数の調整"
+          "term": "Liveness と Readiness",
+          "description": "Liveness はプロセスが動いているかを見て、失敗すると再起動します。Readiness は今リクエストを受けられるかを見て、失敗すると Service の宛先から外れるだけです。",
+          "analogy": "店員が元気かの確認と、今レジに立てるかの確認"
         },
         {
           "term": "requests / limits",
-          "description": "配置に必要な資源の見積もりと、利用の上限を設定します。",
-          "analogy": "予約した席数と使用可能な広さ"
+          "description": "requests は配置と HPA の使用率の基準になる予約、limits は上限です。CPU は超えると遅くなり、memory は超えると OOMKill されます。",
+          "analogy": "予約した席数と店の定員"
+        },
+        {
+          "term": "HPA",
+          "description": "使用率を requests で割った値が目標より高ければレプリカを増やします。上限は maxReplicas とノードの空きで決まり、ノード台数ではありません。",
+          "analogy": "混み具合を見てレジの台数を変える店長"
+        },
+        {
+          "term": "PodDisruptionBudget",
+          "description": "drain などの自発的な退避で、最低何 Pod を残すかを決めます。ノード故障や Pod の直接削除は止められません。",
+          "analogy": "同時に休めるのは 1 人までという休暇ルール"
         }
       ],
       "sections": [
         {
-          "id": "preview",
-          "title": "この章は予習です",
-          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
-          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
-        },
-        {
           "id": "availability",
           "title": "同じ場所に増やすだけでは足りない",
-          "body": "APIを3 Podにしても同じNodeに載っていれば、そのNodeの故障で全て止まり得ます。ノードやAZへの分散、DBの単一障害点、更新時に残す受付能力を組み合わせて考えます。\n\nPDBは自発的な中断の許容数を扱う仕組みです。突然のNode故障まで防止する保証ではありません。"
+          "body": "新しい専用クラスター workboard-phase4（control-plane 1 + worker 2）で行います。Phase 3 の workboard-phase3 は変更しません。WorkBoard は 8082 番です。\n\nAPI を 3 Pod にしても同じ Node に載っていれば、その Node の故障で全て止まり得ます。topologySpreadConstraints でノードに分散し、PDB で drain 中に残す数を決めます。DB は 1 Pod のままなので単一障害点として残ります。",
+          "callout": "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。",
+          "steps": [
+            {
+              "title": "専用クラスターを作る",
+              "description": "metrics-server の導入と準備完了待ちまで行います。既存のクラスターは変更しません。",
+              "command": "powershell -NoProfile -File phases/04-reliability-scaling/scripts/up.ps1",
+              "expected": "Node 3 台が Ready、API 3/3、Web 2/2、HPA が CPU 使用率を表示する。",
+              "linuxCommand": "bash phases/04-reliability-scaling/scripts/up.sh"
+            },
+            {
+              "title": "ノードを退避させる",
+              "description": "PDB が退避の速さをどう制限するかを観察します。",
+              "command": "kubectl --context kind-workboard-phase4 drain workboard-phase4-worker2 --ignore-daemonsets --delete-emptydir-data --timeout=120s",
+              "expected": "PDB を満たす範囲で Pod が順に退避し、残りのノードで Ready になる。"
+            }
+          ]
         },
         {
           "id": "measurement",
           "title": "測ってから数値を決める",
-          "body": "HPAのための指標を得るにはmetrics-server等の前提が必要です。CPU負荷・応答時間・Pod数・イベントを同じ時間軸で記録して判断します。\n\nRolling Updateとrollbackでは、更新中のHTTP応答と残っているPod数を観察します。動いていない実験の復旧時間を推測で記録しないことが大切です。"
+          "body": "負荷生成 Pod で API に負荷をかけ、HPA が Pod を増やし、負荷を止めると戻る様子を記録します。Rolling Update と rollback では、更新中の HTTP 応答と残っている Pod 数を watch-http で同じ時間軸に並べます。\n\nport-forward は Service を指定しても 1 つの Web Pod に固定されます。その Pod が退避されると計測自体が途切れるため、結果を読むときに区別します。",
+          "steps": [
+            {
+              "title": "負荷をかけて HPA を観察する",
+              "description": "自分のクラスター内の API Service だけを対象にします。",
+              "command": "kubectl --context kind-workboard-phase4 apply -f phases/04-reliability-scaling/load/load-generator.yaml",
+              "expected": "CPU 使用率が目標を超えると API の Pod 数が増え、負荷停止後に戻る。"
+            },
+            {
+              "title": "更新を巻き戻す",
+              "description": "不正なイメージで更新した後に戻します。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard rollout undo deployment/workboard-api",
+              "expected": "旧い ReplicaSet の Pod に戻り、更新中も Ready な Pod が残る。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "Phase 3 の内容（Kustomize、StatefulSet、PVC、ConfigMap/Secret）を理解していること。Linux コンテナエンジンが動く Docker（Windows / macOS は Docker Desktop、Linux は Docker Engine または Docker Desktop）、kubectl 1.34〜1.36、kind v0.33.0（導入は Phase 2 と共通の `tools/kind-install.ps1`。Bash は `tools/kind-install.sh`）。ノードは Kubernetes v1.35.8、DB は `postgres:17.11-bookworm`、metrics-server は v0.9.1 です。AWS 費用はありません。\n\nこの Lab は 新しい kind クラスター `workboard-phase4`（control-plane 1 台と worker 2 台）で行います。Phase 2 の `workboard-lab`、Phase 3 の `workboard-phase3`、それぞれの kubeconfig は変更しません。この Phase のファイルは `phases/04-reliability-scaling/` だけで完結し、Web/API の定義や `cluster.yaml` は Phase 3 と重複して存在します（Phase を独立させるための意図的な重複です。ADR-0007（../../docs/adr/0007-phase-directory-layout.md））。ノードが 3 台あるため、他のクラスターと同時に動かすと Docker のメモリ（目安として 4 GiB 以上の空き）と CPU が必要です。\n\nポートは 8082 を使います（8080 は Phase 2、8081 は Phase 3）。DB はダミーデータ専用です。\n\nAPI には Prometheus 形式の `GET /metrics` が加わりました（`workboard_http_requests_total` と `workboard_http_request_duration_seconds`）。この Phase では確認だけを行い、収集と可視化は Phase 8 で扱います。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 1. 適用前に生成結果を読む",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase4` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。\n\n\n新しいターミナルごとに最初の行を実行します。`env.ps1`（Bash は `env.sh`。実行ではなく `source` で読み込みます）はこのシェルだけで Phase 4 用の kubeconfig（`.kube/workboard-phase4.yaml`）を使う設定です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": ". .\\phases\\04-reliability-scaling\\scripts\\env.ps1",
+              "expected": "",
+              "linuxCommand": "source phases/04-reliability-scaling/scripts/env.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl kustomize phases/04-reliability-scaling/kustomize/base\nkubectl kustomize phases/04-reliability-scaling/kustomize/overlays/kind\nkubectl kustomize phases/04-reliability-scaling/kustomize/metrics-server",
+              "expected": "Secret の入力は Git 管理外の `phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env` です。まだ無い場合、次の「2. 構築」のスクリプトがローカル専用のランダムな値で作成します。自分で用意する場合は、例ファイル（ダミー値のみ）をコピーして値を変えます。"
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "Copy-Item phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env.example phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env",
+              "expected": "観察する点は以下です。\n\n- API の Deployment に `replicas`、`strategy`、`topologySpreadConstraints`、3 つの Probe、`resources`、`lifecycle` があること。\n- `overlay` の出力に PodDisruptionBudget と HorizontalPodAutoscaler が含まれること。\n- `metrics-server` の出力は `kube-system` 用で、`workboard` の overlay とは別の適用単位になっていること。`--kubelet-insecure-tls` が引数に追加されていること。",
+              "linuxCommand": "cp phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env.example phases/04-reliability-scaling/kustomize/overlays/kind/secrets/db.env"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-3",
+          "kind": "practice",
+          "title": "実習: 2. 構築",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase4` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File tools/kind-install.ps1\npowershell -NoProfile -File phases/04-reliability-scaling/scripts/up.ps1",
+              "expected": "`kind-install` は導入済みなら何もしません。構築スクリプトは次の順で、固定秒数の sleep ではなく実際の状態を待ちます。\n\n1. `workboard-phase4` クラスターの作成（存在しなければ）。同名クラスターのみ・kubeconfig のみ残っている場合は確認のため停止します。他のクラスターには何も適用しません。\n2. API/Web イメージのビルドと `kind load docker-image`（`imagePullPolicy: Never` のため投入忘れは `ErrImageNeverPull` になります）。\n3. `db.env` が無ければランダムなパスワードを生成して作成（値は表示しません）。既にあれば変更しません。\n4. metrics-server を `kube-system` に適用。\n5. 完了済みの migration Job を削除し、overlay を `kubectl apply -k`。\n6. StatefulSet・migration Job・Web/API・metrics-server の準備完了待ち、メトリクス API（APIService）が Available になるまで待機。\n\nmetrics-server のイメージはノードが `registry.k8s.io` から取得します。ネットワークに接続できる環境が必要です。\n\n期待結果は、Node が 3 台とも Ready、API が 3/3、Web が 2/2、StatefulSet が 1/1、PVC が Bound、migration Job が Completed、`hpa` の TARGETS が `cpu: 数値%/50%`（数値が `<unknown>` の間は metrics-server の準備待ちです）です。",
+              "linuxCommand": "bash tools/kind-install.sh\nbash phases/04-reliability-scaling/scripts/up.sh"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-4",
+          "kind": "practice",
+          "title": "実習: 3. 配置・Probe・resources を観察する",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase4` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 get nodes\nkubectl --context kind-workboard-phase4 -n workboard get pods -o wide\nkubectl --context kind-workboard-phase4 -n workboard describe deployment workboard-api\nkubectl --context kind-workboard-phase4 -n workboard get pod -l app=workboard-api -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,QOS:.status.qosClass\nkubectl --context kind-workboard-phase4 -n workboard get pdb,hpa",
+              "expected": "API Pod が 2 台の worker にどう配置されているか、control-plane に Pod が載っていないか、QoS クラス、PDB の `ALLOWED DISRUPTIONS` を確認します。`describe` の `Liveness` / `Readiness` / `Startup` の行で、それぞれの確認先とパラメーターを読みます。Web や PostgreSQL の配置・QoS も同じコマンドの出力から比べます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-5",
+          "kind": "practice",
+          "title": "実習: 4. metrics-server と使用量",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase4` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 get apiservice v1beta1.metrics.k8s.io\nkubectl --context kind-workboard-phase4 top nodes\nkubectl --context kind-workboard-phase4 -n workboard top pods\nkubectl --context kind-workboard-phase4 -n workboard get hpa workboard-api\nkubectl --context kind-workboard-phase4 -n workboard describe hpa workboard-api",
+              "expected": "APIService が `True` で、`top` が値を返すことを確認します。構築直後に `top` が `Metrics not available` を返す場合は、数十秒待って再実行します。アイドル時の API Pod の CPU とメモリを記録し、`requests` / `limits` を決めた値と比べます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-6",
+          "kind": "practice",
+          "title": "実習: 5. ブラウザーで同じアプリを使う",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase4` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。\n\n\n8082 番が使われていないことを確認し、次のコマンドを実行中のまま残してブラウザーを別に開きます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8082:80",
+              "expected": "http://localhost:8082（http://localhost:8082） でダミータスクを作ります。別のターミナルで次の確認もできます。"
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -i http://localhost:8082/health/ready\ncurl.exe -s http://localhost:8082/api/v1/tasks",
+              "expected": "`port-forward` は Service を指定しても、起動時に選ばれた 1 つの Web Pod にだけつながります。その Pod が削除・退避されると接続が切れます（`curl` が失敗する、`port-forward` のコマンドが終了する）。実験中に応答が止まったら、まず Web Pod が消えていないかを確認し、このコマンドを再実行します。\n\n`/metrics` は Web（Nginx）を経由せず、API Pod の中から確認します。",
+              "linuxCommand": "curl -i http://localhost:8082/health/ready\ncurl -s http://localhost:8082/api/v1/tasks"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard exec deploy/workboard-api -- python -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8000/metrics').read().decode())\"",
+              "expected": "`workboard_http_requests_total` の `route` ラベルが、実際の ID ではなく `/api/v1/tasks/{task_id}` のようなテンプレートになっていることを確認します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-7",
+          "kind": "practice",
+          "title": "実習: 6. HTTP 応答を記録しながら Rolling Update を観察する",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase4` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。\n\n\n別のターミナルで、8082 番への応答を 0.5 秒ごとに記録します（時刻・HTTP ステータス・所要秒数。接続できないとステータスは `000`）。止めるときは `Ctrl+C` です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File phases/04-reliability-scaling/scripts/watch-http.ps1 http://localhost:8082/api/v1/tasks 0.5",
+              "expected": "この記録を流したまま、API の Pod を順に入れ替えます。",
+              "linuxCommand": "bash phases/04-reliability-scaling/scripts/watch-http.sh http://localhost:8082/api/v1/tasks 0.5"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard rollout restart deployment/workboard-api\nkubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=120s\nkubectl --context kind-workboard-phase4 -n workboard get replicaset -l app=workboard-api\nkubectl --context kind-workboard-phase4 -n workboard rollout history deployment/workboard-api",
+              "expected": "更新中の Pod 数の変化（`maxSurge` / `maxUnavailable` の効果）、ReplicaSet が新旧 2 世代あること、記録の中にステータスが 200 以外のものがないかを確認します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-8",
+          "kind": "practice",
+          "title": "実習: A. API Pod を削除する",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase4` だけで、他のクラスターには影響しません。各実験の前後で、6 の `watch-http` を別ターミナルで流しておき、実験を始めた時刻と HTTP ステータスが変化・復旧した時刻を記録します。復旧時間は、変化から 200 が連続して戻るまでの差で測ります。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api -o wide\nkubectl --context kind-workboard-phase4 -n workboard delete pod <API Pod の名前>\nkubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api -w\nkubectl --context kind-workboard-phase4 -n workboard get events --sort-by=.lastTimestamp",
+              "expected": "Pod 数の推移、新しい Pod がどのノードに置かれるか（分散が保たれるか）、`watch-http` の応答の変化、新しい Pod が Ready になるまでの時間、`Startup probe failed` などのイベントを記録します。`-w` は `Ctrl+C` で止めます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-9",
+          "kind": "practice",
+          "title": "実習: B. DB を一時停止する",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase4` だけで、他のクラスターには影響しません。各実験の前後で、6 の `watch-http` を別ターミナルで流しておき、実験を始めた時刻と HTTP ステータスが変化・復旧した時刻を記録します。復旧時間は、変化から 200 が連続して戻るまでの差で測ります。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard scale statefulset workboard-postgres --replicas=0\nkubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api\nkubectl --context kind-workboard-phase4 -n workboard get endpoints workboard-api\nkubectl --context kind-workboard-phase4 -n workboard scale statefulset workboard-postgres --replicas=1\nkubectl --context kind-workboard-phase4 -n workboard rollout status statefulset/workboard-postgres --timeout=120s\nkubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount",
+              "expected": "DB が止まっている間の API Pod の READY と RESTARTS、Service の宛先（endpoints）、HTTP ステータスの変化（とその順序）、DB が戻ってから 200 に戻るまでの時間を記録します。Liveness と Readiness のどちらが、どの動作を引き起こしたかを説明できるか確認します。PVC は残るため、タスクは残ります。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-10",
+          "kind": "practice",
+          "title": "実習: C. Readiness が失敗する更新を適用する",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase4` だけで、他のクラスターには影響しません。各実験の前後で、6 の `watch-http` を別ターミナルで流しておき、実験を始めた時刻と HTTP ステータスが変化・復旧した時刻を記録します。復旧時間は、変化から 200 が連続して戻るまでの差で測ります。\n\n\nReadiness Probe の確認先を存在しないパスに変え、更新が進むかを観察します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard patch deployment workboard-api --type=json -p '[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/readinessProbe/httpGet/path\",\"value\":\"/health/nope\"}]'\nkubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=30s\nkubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api\nkubectl --context kind-workboard-phase4 -n workboard get deployment workboard-api\nkubectl --context kind-workboard-phase4 -n workboard describe pod -l app=workboard-api",
+              "expected": "新旧の Pod 数、`READY` の列、Deployment の `AVAILABLE`、`describe` のイベントを記録します。`watch-http` の応答が途切れるかも確認します。戻すときは次を実行します。"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard rollout undo deployment/workboard-api\nkubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=120s",
+              "expected": ""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-11",
+          "kind": "practice",
+          "title": "実習: D. CPU 負荷を与えて HPA を観察する",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase4` だけで、他のクラスターには影響しません。各実験の前後で、6 の `watch-http` を別ターミナルで流しておき、実験を始めた時刻と HTTP ステータスが変化・復旧した時刻を記録します。復旧時間は、変化から 200 が連続して戻るまでの差で測ります。\n\n\n負荷生成用の Deployment `workboard-load` は、同じクラスター内の Service `workboard-api` だけを繰り返し呼び出します。別のターミナルで HPA の状態を流しておきます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard get hpa workboard-api -w",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 apply -f phases/04-reliability-scaling/load/load-generator.yaml\nkubectl --context kind-workboard-phase4 -n workboard top pods\nkubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api -o wide\nkubectl --context kind-workboard-phase4 -n workboard describe hpa workboard-api",
+              "expected": "負荷の開始時刻、`TARGETS` の値と `REPLICAS` の推移、増えた Pod の配置（ノードごとの数）、`describe hpa` のイベント（`SuccessfulRescale` の理由と上限）を記録します。次に負荷を止め、レプリカ数が戻るまでの時間を測ります。"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 delete -f phases/04-reliability-scaling/load/load-generator.yaml\nkubectl --context kind-workboard-phase4 -n workboard get hpa workboard-api -w",
+              "expected": ""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-12",
+          "kind": "practice",
+          "title": "実習: E. 存在しないイメージで更新し、rollback する",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase4` だけで、他のクラスターには影響しません。各実験の前後で、6 の `watch-http` を別ターミナルで流しておき、実験を始めた時刻と HTTP ステータスが変化・復旧した時刻を記録します。復旧時間は、変化から 200 が連続して戻るまでの差で測ります。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard set image deployment/workboard-api api=workboard-api:does-not-exist\nkubectl --context kind-workboard-phase4 -n workboard get pods -l app=workboard-api\nkubectl --context kind-workboard-phase4 -n workboard get replicaset -l app=workboard-api\nkubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=30s\nkubectl --context kind-workboard-phase4 -n workboard rollout history deployment/workboard-api\nkubectl --context kind-workboard-phase4 -n workboard rollout undo deployment/workboard-api\nkubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=120s\nkubectl --context kind-workboard-phase4 -n workboard get deployment workboard-api -o jsonpath='{.spec.template.spec.containers[0].image}'",
+              "expected": "新しい Pod の STATUS（kind では `imagePullPolicy: Never` のため `ErrImageNeverPull`）、旧 ReplicaSet の Pod が残るか、HTTP 応答が途切れるか、`rollout status` が終わらない理由を記録します。undo 後のイメージ名とリビジョン番号の変化も確認します。`set image` で変えた内容は Git のマニフェストには反映されません。構築スクリプトの再実行（`apply -k`）で、マニフェストの内容へ戻ります。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-13",
+          "kind": "practice",
+          "title": "実習: F. ノードを drain し、PDB の効果を見る",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase4` だけで、他のクラスターには影響しません。各実験の前後で、6 の `watch-http` を別ターミナルで流しておき、実験を始めた時刻と HTTP ステータスが変化・復旧した時刻を記録します。復旧時間は、変化から 200 が連続して戻るまでの差で測ります。\n\n\n先に PostgreSQL がどのノードにいるかを確認します。 kind の PV はそのノード内のディレクトリで、Pod はそのノードに固定されます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard get pods -o wide",
+              "expected": "PostgreSQL がいない worker を drain の対象にします（以下は `workboard-phase4-worker2` の例。違う場合は読み替えます）。"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 -n workboard get pdb\nkubectl --context kind-workboard-phase4 drain workboard-phase4-worker2 --ignore-daemonsets --delete-emptydir-data --timeout=120s\nkubectl --context kind-workboard-phase4 -n workboard get pods -o wide\nkubectl --context kind-workboard-phase4 -n workboard get pdb\nkubectl --context kind-workboard-phase4 get nodes",
+              "expected": "追い出された Pod の種類と数、移動先、drain にかかった時間、`ALLOWED DISRUPTIONS` を記録します。この時点では `port-forward` の接続先 Web Pod が退避された場合に応答が止まるため、必要なら手順 5 を再実行します。\n\n次に、残った worker も drain して、PDB が何を止めるかを確認します（PostgreSQL も追い出され、DB が停止します。ダミーデータで行います）。"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 drain workboard-phase4-worker --ignore-daemonsets --delete-emptydir-data --timeout=40s\nkubectl --context kind-workboard-phase4 -n workboard get pods -o wide\nkubectl --context kind-workboard-phase4 -n workboard get pdb",
+              "expected": "drain のメッセージ（どの Pod の何が拒否されるか）、Pending の Pod とその理由（`describe pod` のイベント）、PostgreSQL の状態を記録します。最後に必ず元へ戻します。"
+            },
+            {
+              "title": "手順 4 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase4 uncordon workboard-phase4-worker workboard-phase4-worker2\nkubectl --context kind-workboard-phase4 -n workboard rollout status deployment/workboard-api --timeout=120s\nkubectl --context kind-workboard-phase4 -n workboard rollout status statefulset/workboard-postgres --timeout=120s\nkubectl --context kind-workboard-phase4 get nodes",
+              "expected": ""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-14",
+          "kind": "practice",
+          "title": "実習: 失敗時に確認すること",
+          "body": "- 接続先が違う: `. .\\phases\\04-reliability-scaling\\scripts\\env.ps1`（Bash は `source phases/04-reliability-scaling/scripts/env.sh`）を読み込んだか。context が `kind-workboard-phase4` か。\n- API Pod が 3 つ揃わず Pending: `describe pod` のイベントで `didn't match pod topology spread constraints` や `untolerated taint` を読む。`kubectl get nodes` の台数と、`topologySpreadConstraints` の `nodeTaintsPolicy` を確認する。\n- `kubectl top` が `Metrics API not available`: `kubectl -n kube-system get pods` で metrics-server が Ready か。`logs deployment/metrics-server -n kube-system` に証明書の検証エラー（`x509`）が出ていないか。出る場合は `--kubelet-insecure-tls` の引数がパッチで入っているか確認する。\n- HPA の TARGETS が `<unknown>`: metrics-server が起動していない、または対象 Pod に `requests.cpu` が無い。`describe hpa` のイベントを読む。\n- `ErrImageNeverPull`: `kind load docker-image ... --name workboard-phase4` が成功したか（`up` を再実行する）。故障実験 E では意図した動作。\n- Pod が `Pending`（drain 後）: `kubectl get nodes` に `SchedulingDisabled` が残っていないか。`uncordon` したか。\n- API が Ready にならない: `logs deployment/workboard-api` の認証エラー。`db.env` が DB を初期化した値と一致しているか。\n- 応答が止まる / `curl` が失敗する: `port-forward` が選んだ Web Pod が削除・退避されていないか。手順 5 を再実行する。\n- Web から 502: API の Pod が全て NotReady（宛先なし）でないか。`get endpoints workboard-api` を確認する。\n- 8082 が使えない: 他のプロセスが使用中でないか確認し、解放できる場合だけ解放する。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-15",
+          "kind": "practice",
+          "title": "実習: Linux / macOS / WSL での前提",
+          "body": "スクリプトは PowerShell 版と同じ処理の Bash 版（`phases/04-reliability-scaling/scripts/` の `env.sh`・`up.sh`・`watch-http.sh`、導入は Phase 2 と共通の `tools/kind-install.sh`）があり、上の手順の「Linux / macOS / WSL (Bash)」に従います。Bash 4 以降、Docker（WSL は Docker Desktop の WSL 統合）、kubectl 1.34〜1.36、`curl` が必要です。その他の条件は Phase 2 の「Linux / macOS / WSL での前提」と同じです。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-16",
+          "kind": "practice",
+          "title": "実習: 後片付け・再構築",
+          "body": "port-forward を実行しているターミナルで `Ctrl+C` を押すと入口だけが閉じます。クラスターとアプリは動き続けます。負荷生成の Deployment が残っている場合は、実験 D の `delete -f` で削除します。\n\n`workboard-phase4` を削除すると、PVC/PV に保存した DB のデータも失われます。クラスター名と消えるデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。他のクラスターは対象外です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kind delete cluster --name workboard-phase4",
+              "expected": "削除後、専用 kubeconfig `.kube/workboard-phase4.yaml` が残っていれば対象を確認してそのファイルだけ削除します。`db.env` は残して再利用できます。クラスター（PVC）を残したまま `db.env` を消さないでください。 構築スクリプトが別のパスワードを生成し、初期化済みの DB と一致しなくなります。"
+            }
+          ]
         }
       ],
       "diagram": {
         "type": "scaling",
         "title": "通信・レプリカ制御・Node 配置",
-        "caption": "Phase 4 の予習。API 部分の拡大図で、DB/Web は省略しています。",
+        "caption": "workboard-phase4（control-plane 1 + worker 2）の API 部分の拡大図です。DB/Web は省略しています。",
         "nodes": [
           {
             "id": "metrics",
@@ -2421,7 +2741,7 @@
           {
             "id": "traffic",
             "title": "通信と配置",
-            "description": "予習の API 拡大図です。Service は Node 内のプロセスではありません。2 Pod が異なる Node に配置される条件は別途設計が必要です。",
+            "description": "API の拡大図です。Service は Node 内のプロセスではありません。Pod を異なる Node に置くのは topologySpreadConstraints の条件で、レプリカ数だけでは決まりません。",
             "nodeIds": [
               "service",
               "api-a",
@@ -2454,36 +2774,120 @@
       "questions": [
         {
           "id": "q1",
-          "prompt": "レプリカが 3 つでもノードが 1 つなら何が単一障害点か？",
+          "prompt": "API のレプリカを 3 つにしても、ノードが 1 つだけなら何が単一障害点になるのか？ ノード 2 台のこのクラスターでも、まだ残る単一障害点は何か？",
           "rubric": [
-            "同一ノードの障害で全レプリカが停止し得ると説明する",
-            "ノードやAZへの分散とDBの単一障害点も考える"
+            "同一ノードに載ったレプリカがノード障害で同時に止まり得ると説明する",
+            "2 ノードでも残る単一障害点（1 Pod の DB、port-forward、同一ホスト）を挙げる"
           ]
         },
         {
           "id": "q2",
-          "prompt": "HPA は Node の台数まで増やすのか？",
+          "prompt": "HPA は Node の台数まで Pod を増やすのか？ 増やせる最大数は何で決まり、Pod が置けない場合は何が起きるか？",
           "rubric": [
-            "HPAは主にワークロードのレプリカ数を調整すると説明する",
-            "ノード容量の追加は別の仕組みであると説明する"
+            "上限は maxReplicas・指標・requests・ノードの空きで決まり、ノード台数とは直結しないと説明する",
+            "置けない Pod は Pending になり、ノード追加は別の仕組みだと説明する"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "Startup・Liveness・Readiness の Probe は、それぞれ何を確認すべきか？ DB が止まったとき、各 Probe が失敗すると Pod はどうなるか？",
+          "rubric": [
+            "Liveness を DB 非依存にする理由として再起動の連鎖を説明する",
+            "Startup と Readiness の役割と、DB 停止時に各 Probe が何を起こすかを区別する"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "requests と limits は何を根拠に決めるか？ CPU と memory で、limits を超えたときの挙動はどう違うか？ HPA の CPU 使用率は何に対する割合か？",
+          "rubric": [
+            "requests の根拠（実測など）と、HPA の使用率の分母が requests であることに触れる",
+            "CPU は throttling、memory は OOMKill という超過時の違いを区別する"
+          ]
+        },
+        {
+          "id": "q5",
+          "prompt": "PodDisruptionBudget は何を守り、何を守らないのか？",
+          "rubric": [
+            "drain など自発的な退避だけが対象と説明する",
+            "ノード故障・直接削除・単一レプリカの DB では守れないことを区別する"
+          ]
+        },
+        {
+          "id": "q6",
+          "prompt": "`maxSurge` と `maxUnavailable` は何を基準に決めるか？ 新しい Pod が Ready にならないとき、更新は進むか？ `rollout undo` で戻るもの・戻らないものは何か？",
+          "rubric": [
+            "maxSurge / maxUnavailable と容量・可用性のトレードオフを説明する",
+            "undo で戻るもの（Pod テンプレート）と戻らないもの（DB のデータなど）を区別する"
+          ]
+        },
+        {
+          "id": "q7",
+          "prompt": "`topologySpreadConstraints` の `whenUnsatisfiable` に `DoNotSchedule` と `ScheduleAnyway` のどちらを使うか？ それぞれ、Pod が置けない状況で何が起きるか？",
+          "rubric": [
+            "DoNotSchedule は Pending、ScheduleAnyway は偏りを許すという違いを説明する",
+            "可用性要件に応じた選択の理由か、taint のあるノードの扱いに触れる"
           ]
         }
       ],
       "memoFields": [
         {
           "id": "m1",
-          "label": "理解した概念"
+          "label": "実行日・OS・シェル"
         },
         {
           "id": "m2",
-          "label": "想定する構成と採用理由"
+          "label": "kind / kubectl / Kubernetes / metrics-server のバージョン"
         },
         {
           "id": "m3",
-          "label": "必要な実験と期待結果"
+          "label": "Node の台数と、API Pod のノード別の配置"
         },
         {
           "id": "m4",
+          "label": "Probe の設定値（確認先・間隔・失敗回数）と requests / limits の値・根拠"
+        },
+        {
+          "id": "m5",
+          "label": "アイドル時と負荷時の API Pod の CPU・メモリ"
+        },
+        {
+          "id": "m6",
+          "label": "Rolling Update 中の Pod 数の変化と HTTP ステータスの分布"
+        },
+        {
+          "id": "m7",
+          "label": "故障実験 A（API Pod 削除）の Pod 数・HTTP 応答・復旧時間"
+        },
+        {
+          "id": "m8",
+          "label": "故障実験 B（DB 一時停止）の READY・RESTARTS・HTTP ステータスの順序・復旧時間"
+        },
+        {
+          "id": "m9",
+          "label": "故障実験 C（Readiness 失敗の更新）の新旧 Pod 数と HTTP 応答"
+        },
+        {
+          "id": "m10",
+          "label": "故障実験 D（CPU 負荷）の HPA の推移（TARGETS・REPLICAS・所要時間）"
+        },
+        {
+          "id": "m11",
+          "label": "故障実験 E（存在しないイメージ）の Pod の状態と rollback 後のリビジョン"
+        },
+        {
+          "id": "m12",
+          "label": "故障実験 F（drain と PDB）の移動した Pod・拒否されたメッセージ・Pending の理由"
+        },
+        {
+          "id": "m13",
+          "label": "設計課題 1〜7 への回答と、ADR-0009 との違い"
+        },
+        {
+          "id": "m14",
+          "label": "後片付け・残したクラスター"
+        },
+        {
+          "id": "m15",
           "label": "疑問・未解決事項"
         }
       ],
@@ -2491,6 +2895,10 @@
         {
           "label": "一次設計書",
           "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 04 原本",
+          "path": "phases/04-reliability-scaling/README.md"
         }
       ]
     },
@@ -2498,54 +2906,420 @@
       "id": 5,
       "slug": "security",
       "title": "権限と通信を絞る",
-      "subtitle": "予習 / RBAC・NetworkPolicy・診断",
+      "subtitle": "kind + Calico・RBAC・NetworkPolicy・PSS・Runbook",
       "level": "local",
-      "implemented": false,
-      "estimatedMinutes": 35,
-      "summary": "誰が何をできるかと、どこへ通信できるかを別々に考えます。",
+      "implemented": true,
+      "estimatedMinutes": 80,
+      "summary": "誰が何をできるかと、どこへ通信できるかを別々に設定し、許可と拒否の両方を確かめます。",
       "goals": [
-        "ServiceAccount、RBAC、NetworkPolicy、Pod Security Standards、非 root 実行、イメージ管理、診断フロー。任意で補助 CLI の k9s。",
-        "実装前に設計条件と検証方法を説明できる"
+        "Pod Security Standards、securityContext、ServiceAccount、RBAC、NetworkPolicy が、それぞれ何を制限し、何を制限しないかを説明する。",
+        "NetworkPolicy の効果を、対応する CNI を導入したうえで、通信の**許可と拒否の両方**を実測して確認する。",
+        "非 root 実行・読み取り専用のルートファイルシステム・不要な権限の削除を、WorkBoard の 3 つのワークロードで確かめる。",
+        "意図的に作った 6 種類の障害を、`kubectl describe` / `logs` / `events` / EndpointSlice / `auth can-i` で調査し、復旧する。",
+        "調査の手順を Runbook にまとめ、再発防止策を説明する。"
       ],
       "concepts": [
         {
+          "term": "Pod Security Standards",
+          "description": "Namespace のラベルで、Pod の作成時に root や特権などの危険な設定を検査し、拒否・警告・監査します。enforce は Pod にだけ効き、warn と audit は Deployment などにも効きます。",
+          "analogy": "建物の入口の持ち物検査"
+        },
+        {
           "term": "RBAC",
-          "description": "Kubernetes APIへの操作権限を役割と関連付けます。",
-          "analogy": "役職ごとの操作許可証"
+          "description": "Role は何ができるか、RoleBinding は誰にそれを与えるかを決めます。Role があっても Binding がなければ権限はありません。",
+          "analogy": "鍵のリストと、鍵を渡す相手の名簿"
         },
         {
-          "term": "ServiceAccount",
-          "description": "Pod内の処理がKubernetes APIを利用するときの主体です。",
-          "analogy": "作業員本人とは別の設備用身分証"
+          "term": "NetworkPolicy と CNI",
+          "description": "NetworkPolicy は通信の許可ルールを書く API オブジェクトで、実際に遮断するのは CNI です。対応しない CNI では作成できても効きません。",
+          "analogy": "規則書と、それを守らせる警備員"
         },
         {
-          "term": "NetworkPolicy",
-          "description": "対応CNIのもとでPod間等の通信許可を制御します。",
-          "analogy": "部屋の間に置く通行ルール"
+          "term": "securityContext",
+          "description": "非 root、読み取り専用のルート、capability の削除、権限昇格の禁止で、侵入されたときの影響を小さくします。Secret を読める人の問題は別です。",
+          "analogy": "包丁は使えても倉庫の鍵は持たない料理人"
         }
       ],
       "sections": [
         {
-          "id": "preview",
-          "title": "この章は予習です",
-          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
-          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
-        },
-        {
           "id": "boundaries",
           "title": "権限と通信は別の境界",
-          "body": "RBACでAPI操作を制限しても、アプリの通信まで自動的に閉じるわけではありません。NetworkPolicyを定義しても、CNIが処理しなければ期待どおりに遮断されません。\n\nSecretの読み取り権限、実行ユーザー、コンテナ権限、イメージを合わせて考えます。"
+          "body": "新しい専用クラスター workboard-phase5 は既定の CNI を外し、Calico を入れて NetworkPolicy を有効にします。WorkBoard は 8083 番です。\n\nRBAC で API 操作を制限しても、アプリの通信まで閉じるわけではありません。default deny に必要な通信だけを足し、許可した経路が通ることと、許可していない経路がタイムアウトすることの両方を確かめます。",
+          "callout": "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。",
+          "steps": [
+            {
+              "title": "専用クラスターを作る",
+              "description": "Calico の導入と Node の Ready 待ちまで行います。",
+              "command": "powershell -NoProfile -File phases/05-security-and-failure/scripts/up.ps1",
+              "expected": "Calico が Running、StatefulSet 1/1、Web/API 1/1、NetworkPolicy が作られる。",
+              "linuxCommand": "bash phases/05-security-and-failure/scripts/up.sh"
+            },
+            {
+              "title": "読み取り専用の主体を試す",
+              "description": "Secret を読めないことを確かめます。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard auth can-i get secrets --as=system:serviceaccount:workboard:workboard-viewer",
+              "expected": "no が返る。"
+            },
+            {
+              "title": "拒否される通信を試す",
+              "description": "Web から DB への直接接続は許可していません。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-web -- nc -zv -w 3 workboard-postgres 5432",
+              "expected": "接続がタイムアウトする。"
+            },
+            {
+              "title": "違反する Pod を作る",
+              "description": "restricted に違反する Pod の作成が拒否されるかを見ます。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard apply -f phases/05-security-and-failure/experiments/violating-pod.yaml",
+              "expected": "Forbidden と違反項目が表示される。"
+            }
+          ]
         },
         {
           "id": "diagnose",
           "title": "症状から層を切り分ける",
-          "body": "イメージ取得失敗ならイベントとタグ、通信失敗ならselector・EndpointSlice・DNS、権限不足なら主体とRoleBindingを追います。\n\n実装時には再現条件・観察したログ・原因・復旧手順をRunbookに残す計画です。通信を拒否できたという結論には、許可と拒否の両方の試験が必要です。"
+          "body": "イメージ取得失敗ならイベントとタグ、通信失敗なら名前解決・EndpointSlice・ポート・NetworkPolicy、権限不足なら主体と RoleBinding を追います。runbook.md に、症状・観察コマンド・原因・復旧・再発防止を障害ごとにまとめてあります。\n\nPod が Ready でも、kubelet の Probe は NetworkPolicy の影響を受けないため、アプリ間の通信は遮断され得ます。",
+          "steps": [
+            {
+              "title": "Service の転送先を見る",
+              "description": "selector の誤りでは転送先が空になります。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard get endpointslices -l kubernetes.io/service-name=workboard-api",
+              "expected": "正常時は API Pod のアドレスが並ぶ。"
+            },
+            {
+              "title": "memory 不足を再現する",
+              "description": "low-memory-limit の overlay で OOMKilled を起こします。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/experiments/low-memory-limit",
+              "expected": "Pod が OOMKilled（Exit 137）で再起動を繰り返す。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "Phase 3 の内容（Namespace・ConfigMap・Secret・StatefulSet・Kustomize）を理解していること。Linux コンテナエンジンが動く Docker（Windows / macOS は Docker Desktop、Linux は Docker Engine または Docker Desktop）、kubectl 1.34〜1.36、kind v0.33.0（導入は Phase 2 と共通の `tools/kind-install.ps1`。Bash は `tools/kind-install.sh`）。ノードは Kubernetes v1.35.8、DB は `postgres:17.11-bookworm`、CNI は Calico v3.33.0（構築スクリプトが導入します。イメージの取得にインターネット接続が必要です）。AWS 費用はありません。\n\nこの Lab は 新しい kind クラスター `workboard-phase5` で行います。ほかの Lab のクラスター（`workboard-lab`、`workboard-phase3` など）とその DB、`.kube/` の既存ファイルは変更しません。この Phase のファイルは `phases/05-security-and-failure/` だけで完結し、kind の `cluster.yaml` やマニフェストは Phase 3 と別に持ちます（内容が重複するのは Phase を独立させるための意図的な重複です）。複数のクラスターを同時に動かすには Docker のメモリ・ディスクの空きが追加で必要です。\n\nポートは 8080〜8082 と衝突しないよう 8083 を使います。DB はダミーデータ専用で、Compose の DB/volume/`.env` は使いません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 1. 適用前に生成結果を読む",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase5` を指定します。ほかのクラスターに誤って操作しないよう、毎回 context を確認してください。\n\n\n新しいターミナルごとに最初の行を実行します。`env.ps1`（Bash は `env.sh`。実行ではなく `source` で読み込みます）はこのシェルだけで Phase 5 用の kubeconfig（`.kube/workboard-phase5.yaml`）を使う設定です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": ". .\\phases\\05-security-and-failure\\scripts\\env.ps1",
+              "expected": "",
+              "linuxCommand": "source phases/05-security-and-failure/scripts/env.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl kustomize phases/05-security-and-failure/kustomize/base\nkubectl kustomize phases/05-security-and-failure/kustomize/overlays/kind",
+              "expected": "Secret の入力は Git 管理外の `phases/05-security-and-failure/kustomize/overlays/kind/secrets/db.env` です。まだ無い場合、次の「2. 構築」のスクリプトがローカル専用のランダムな値で作成します。自分で用意する場合は、次で例ファイルをコピーして値を変えます（例ファイルはダミー値のみで、実際の値は Git に入れません）。"
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "Copy-Item phases/05-security-and-failure/kustomize/overlays/kind/secrets/db.env.example phases/05-security-and-failure/kustomize/overlays/kind/secrets/db.env",
+              "expected": "観察する点は以下です。\n\n- Namespace に `pod-security.kubernetes.io/enforce`・`warn`・`audit` のラベルがあります。\n- Web・API・migrate・PostgreSQL ごとに別の ServiceAccount があり、`automountServiceAccountToken: false` です。\n- 各コンテナに `securityContext`（`allowPrivilegeEscalation: false`、`capabilities.drop: [ALL]`、`readOnlyRootFilesystem: true`）と `resources` があります。書き込み先は emptyDir です。\n- `Role`/`RoleBinding` の `workboard-viewer` に Secret が含まれるか、NetworkPolicy が何を許可しているかを読みます。",
+              "linuxCommand": "cp phases/05-security-and-failure/kustomize/overlays/kind/secrets/db.env.example phases/05-security-and-failure/kustomize/overlays/kind/secrets/db.env"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-3",
+          "kind": "practice",
+          "title": "実習: 2. 構築",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase5` を指定します。ほかのクラスターに誤って操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File tools/kind-install.ps1\npowershell -NoProfile -File phases/05-security-and-failure/scripts/up.ps1",
+              "expected": "`kind-install.ps1`（Bash は `kind-install.sh`）は導入済みなら何もしません。構築スクリプトは次の順で、固定秒数の sleep ではなく実際の状態を待ちます。\n\n1. `workboard-phase5` クラスターの作成（存在しなければ）。`cluster.yaml` で kind の既定 CNI を無効にしているため、`--wait` なしで作成します（CNI がないと Node が Ready にならないため）。同名クラスターのみ・kubeconfig のみ残っている場合は確認のため停止します。\n2. Calico v3.33.0 の導入（`kubectl create`）と、`calico-node`・`calico-kube-controllers`・Node・CoreDNS の準備完了待ち。\n3. API/Web の Dockerfile のビルドと `kind load docker-image`。\n4. `db.env` が無ければランダムなパスワードを生成（値は表示しません）。あれば変更しません。\n5. 完了済みの migration Job を削除し、`kubectl apply -k phases/05-security-and-failure/kustomize/overlays/kind`。\n6. StatefulSet → migration Job → Web/API Deployment の準備完了待ち。\n\nスクリプトは既存のクラスター・PVC・DB を削除しません。再実行しても冪等です。期待結果は、Node が Ready、Calico が Running、StatefulSet が 1/1、migration Job が Completed、Web/API の Deployment が各 1 Pod、NetworkPolicy が 7 個です。",
+              "linuxCommand": "bash tools/kind-install.sh\nbash phases/05-security-and-failure/scripts/up.sh"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-4",
+          "kind": "practice",
+          "title": "実習: 3. CNI と実行ユーザーを観察する",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase5` を指定します。ほかのクラスターに誤って操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 get nodes\nkubectl --context kind-workboard-phase5 -n kube-system get pods -l k8s-app=calico-node\nkubectl --context kind-workboard-phase5 -n workboard get pods -o wide\nkubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-web -- id\nkubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-api -- id\nkubectl --context kind-workboard-phase5 -n workboard exec statefulset/workboard-postgres -- id\nkubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-web -- sh -c 'touch /usr/share/nginx/html/x'\nkubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-web -- sh -c 'touch /tmp/x && echo written'\nkubectl --context kind-workboard-phase5 -n workboard get pod -l app=workboard-api -o jsonpath='{.items[0].spec.automountServiceAccountToken}{\"\\n\"}'",
+              "expected": "Web・API・PostgreSQL が root ではなく、それぞれ異なる UID で動くこと、emptyDir 以外には書き込めないこと、Pod に ServiceAccount のトークンが自動では入っていないことを確認します。`kubectl get ... -o yaml` で `securityContext` の実際の値も読みます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-5",
+          "kind": "practice",
+          "title": "実習: 4. Pod Security Standards の拒否を確かめる",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase5` を指定します。ほかのクラスターに誤って操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 get namespace workboard --show-labels\nkubectl --context kind-workboard-phase5 -n workboard apply -f phases/05-security-and-failure/experiments/violating-pod.yaml\nkubectl --context kind-workboard-phase5 -n workboard get pod violating",
+              "expected": "特権コンテナ・root 実行などの違反を含む Pod は `Forbidden: violates PodSecurity \"restricted:v1.35\"` で作成が拒否され、違反項目がすべて列挙されます。Pod は作られません。同じ内容を Deployment にした場合に何が起きるか（Deployment は受理され、`warn` の警告と ReplicaSet のイベントで気づくか）を、公式資料で確認してから予想し、必要なら自分で試します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-6",
+          "kind": "practice",
+          "title": "実習: 5. ServiceAccount と RBAC を確かめる",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase5` を指定します。ほかのクラスターに誤って操作しないよう、毎回 context を確認してください。\n\n\n`workboard-viewer` は Pod には使わず、`--as` で権限を試すための学習用の主体です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard get role,rolebinding,serviceaccount\nkubectl --context kind-workboard-phase5 -n workboard describe role workboard-viewer\nkubectl --context kind-workboard-phase5 -n workboard auth can-i get pods --as=system:serviceaccount:workboard:workboard-viewer\nkubectl --context kind-workboard-phase5 -n workboard auth can-i get pods/log --as=system:serviceaccount:workboard:workboard-viewer\nkubectl --context kind-workboard-phase5 -n workboard auth can-i get secrets --as=system:serviceaccount:workboard:workboard-viewer\nkubectl --context kind-workboard-phase5 -n workboard auth can-i delete pods --as=system:serviceaccount:workboard:workboard-viewer\nkubectl --context kind-workboard-phase5 -n kube-system auth can-i get pods --as=system:serviceaccount:workboard:workboard-viewer\nkubectl --context kind-workboard-phase5 -n workboard auth can-i get pods --as=system:serviceaccount:workboard:default\nkubectl --context kind-workboard-phase5 -n workboard get secrets --as=system:serviceaccount:workboard:workboard-viewer\nkubectl --context kind-workboard-phase5 -n workboard auth can-i --list --as=system:serviceaccount:workboard:workboard-viewer",
+              "expected": "許可（`yes`）と拒否（`no`）の両方を表にまとめます。拒否は `Forbidden` のエラー文に、主体・動詞・リソース・Namespace が書かれます。Role は Namespace 内だけで、`kube-system` や `default` ServiceAccount には効かないことを確認します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-7",
+          "kind": "practice",
+          "title": "実習: 6. NetworkPolicy の許可と拒否を確かめる",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase5` を指定します。ほかのクラスターに誤って操作しないよう、毎回 context を確認してください。\n\n\n最初に、遮断を行うのは NetworkPolicy ではなく CNI であること、この環境の CNI が Calico であることを確認します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard get networkpolicy\nkubectl --context kind-workboard-phase5 -n workboard describe networkpolicy default-deny-all api-traffic postgres-ingress",
+              "expected": "許可されるべき通信（成功する）:"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-web -- wget -qO- -T 3 http://workboard-api:8000/health/ready\nkubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-api -- python -c \"import socket;socket.create_connection(('workboard-postgres',5432),3);print('connected')\"",
+              "expected": "拒否されるべき通信（失敗する。`Connection refused` ではなくタイムアウトになる点を見ます）:"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-web -- nc -zv -w 3 workboard-postgres 5432\nkubectl --context kind-workboard-phase5 -n workboard exec deploy/workboard-api -- python -c \"import socket;socket.create_connection(('workboard-web',80),3)\"",
+              "expected": "どのポリシーにも一致しない新しい Pod（`probe`）は、名前解決はできるのに DB へ接続できません。"
+            },
+            {
+              "title": "手順 4 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard apply -f phases/05-security-and-failure/experiments/probe-pod.yaml\nkubectl --context kind-workboard-phase5 -n workboard wait --for=condition=Ready pod/probe --timeout=90s\nkubectl --context kind-workboard-phase5 -n workboard exec probe -- getent hosts workboard-postgres\nkubectl --context kind-workboard-phase5 -n workboard exec probe -- pg_isready -h workboard-postgres -p 5432 -t 3",
+              "expected": "許可された通信が成功し、許可されていない通信が失敗したときだけ、NetworkPolicy が効いていると判断します。作成に成功しただけでは判断できません。確認後の `probe` は `kubectl -n workboard delete pod probe` で削除します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-8",
+          "kind": "practice",
+          "title": "実習: 7. ブラウザーで同じアプリを使う",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase5` を指定します。ほかのクラスターに誤って操作しないよう、毎回 context を確認してください。\n\n\n8083 番が使われていないことを確認し、次のコマンドを実行中のまま残してブラウザーを別に開きます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8083:80",
+              "expected": "http://localhost:8083（http://localhost:8083） でダミータスクを作ります。別のターミナルで次の確認もできます。"
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -i http://localhost:8083/health/ready\ncurl.exe -s http://localhost:8083/api/v1/tasks",
+              "expected": "default deny の NetworkPolicy があっても port-forward で画面を開けること、その理由を考えます。",
+              "linuxCommand": "curl -i http://localhost:8083/health/ready\ncurl -s http://localhost:8083/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-9",
+          "kind": "practice",
+          "title": "実習: 8. 安全なダミー負荷を生成する",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase5` を指定します。ほかのクラスターに誤って操作しないよう、毎回 context を確認してください。\n\n\n`experiments/loadgen-job.yaml` は、同じ Namespace の `workboard-web` だけに、2 並列 × 50 回（計 100 回）の GET を間隔 0.2 秒で送る Job です。回数・並列度は固定で、外部には送りません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard apply -f phases/05-security-and-failure/experiments/loadgen-job.yaml\nkubectl --context kind-workboard-phase5 -n workboard wait --for=condition=complete job/workboard-loadgen --timeout=120s\nkubectl --context kind-workboard-phase5 -n workboard logs job/workboard-loadgen\nkubectl --context kind-workboard-phase5 -n workboard delete job workboard-loadgen",
+              "expected": "2 つの Pod のログに `success=50 failure=0` が出ます。この負荷の Pod だけが、NetworkPolicy で Web への通信を許可されています。同じ Job を再実行する前に、必ず Job を削除します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-10",
+          "kind": "practice",
+          "title": "実習: A. 存在しない image tag",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase5` だけです。各実験は「注入 → 観察 → 復旧」の順で、観察の観点と読み方は Runbook（runbook.md） の対応する節にあります。Runbook を見る前に、まず自分で `describe` / `logs` / `get events` から原因を推測してください。\n\n復旧は、特に指定がなければ次の 1 コマンドです（`apply` は、注入した差分を元の定義に戻します）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/kustomize/overlays/kind",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/experiments/bad-image-tag\nkubectl --context kind-workboard-phase5 -n workboard get pods -l app=workboard-web",
+              "expected": ""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-11",
+          "kind": "practice",
+          "title": "実習: B. 誤った Service selector",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase5` だけです。各実験は「注入 → 観察 → 復旧」の順で、観察の観点と読み方は Runbook（runbook.md） の対応する節にあります。Runbook を見る前に、まず自分で `describe` / `logs` / `get events` から原因を推測してください。\n\n復旧は、特に指定がなければ次の 1 コマンドです（`apply` は、注入した差分を元の定義に戻します）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/kustomize/overlays/kind",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/experiments/wrong-selector\nkubectl --context kind-workboard-phase5 -n workboard get endpointslices -l kubernetes.io/service-name=workboard-api",
+              "expected": ""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-12",
+          "kind": "practice",
+          "title": "実習: C. DB の DNS 名のミス",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase5` だけです。各実験は「注入 → 観察 → 復旧」の順で、観察の観点と読み方は Runbook（runbook.md） の対応する節にあります。Runbook を見る前に、まず自分で `describe` / `logs` / `get events` から原因を推測してください。\n\n復旧は、特に指定がなければ次の 1 コマンドです（`apply` は、注入した差分を元の定義に戻します）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/kustomize/overlays/kind",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/experiments/wrong-db-host\nkubectl --context kind-workboard-phase5 -n workboard get pods -l app=workboard-api",
+              "expected": ""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-13",
+          "kind": "practice",
+          "title": "実習: D. 権限不足（RBAC）",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase5` だけです。各実験は「注入 → 観察 → 復旧」の順で、観察の観点と読み方は Runbook（runbook.md） の対応する節にあります。Runbook を見る前に、まず自分で `describe` / `logs` / `get events` から原因を推測してください。\n\n復旧は、特に指定がなければ次の 1 コマンドです（`apply` は、注入した差分を元の定義に戻します）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/kustomize/overlays/kind",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard delete rolebinding workboard-viewer\nkubectl --context kind-workboard-phase5 -n workboard get pods --as=system:serviceaccount:workboard:workboard-viewer",
+              "expected": ""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-14",
+          "kind": "practice",
+          "title": "実習: E. memory limit による OOMKilled",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase5` だけです。各実験は「注入 → 観察 → 復旧」の順で、観察の観点と読み方は Runbook（runbook.md） の対応する節にあります。Runbook を見る前に、まず自分で `describe` / `logs` / `get events` から原因を推測してください。\n\n復旧は、特に指定がなければ次の 1 コマンドです（`apply` は、注入した差分を元の定義に戻します）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/kustomize/overlays/kind",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/experiments/low-memory-limit\nkubectl --context kind-workboard-phase5 -n workboard get pods -l app=workboard-api",
+              "expected": ""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-15",
+          "kind": "practice",
+          "title": "実習: F. NetworkPolicy による遮断",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase5` だけです。各実験は「注入 → 観察 → 復旧」の順で、観察の観点と読み方は Runbook（runbook.md） の対応する節にあります。Runbook を見る前に、まず自分で `describe` / `logs` / `get events` から原因を推測してください。\n\n復旧は、特に指定がなければ次の 1 コマンドです（`apply` は、注入した差分を元の定義に戻します）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 apply -k phases/05-security-and-failure/kustomize/overlays/kind",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase5 -n workboard delete networkpolicy api-traffic\nkubectl --context kind-workboard-phase5 -n workboard get pods",
+              "expected": "画面（8083）の操作や `exec` による通信確認で、何が起きるかを観察します。各実験の後は必ず復旧し、`kubectl get pods`・`get endpointslices`・`auth can-i`・画面の操作で復旧を確認してから次に進みます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-16",
+          "kind": "practice",
+          "title": "実習: 失敗時に確認すること",
+          "body": "- `kubectl kustomize` が `secrets/db.env` を読めない: ファイルがあるか。`scripts/up.ps1` で生成するか、例ファイルからコピーしたか。\n- 接続先が違う: `. .\\phases\\05-security-and-failure\\scripts\\env.ps1`（Bash は `source phases/05-security-and-failure/scripts/env.sh`）を読み込んだか。context が `kind-workboard-phase5` か。\n- クラスター作成が止まる / Node が `NotReady`: `kubectl get pods -n kube-system` で `calico-node` が Running か。Calico のイメージ（quay.io）を取得できているか（`describe pod` の Events）。\n- Pod が `CreateContainerConfigError`: `describe pod` のメッセージ。`runAsNonRoot` なのにイメージの USER が名前（数値でない）だと、`runAsUser` の指定が必要。\n- Pod が作られない: `describe replicaset` の `FailedCreate`。PodSecurity の違反項目が列挙される。\n- 起動直後にクラッシュ: `logs --previous` に `Read-only file system` がないか。書き込み先を emptyDir にしているか。\n- `ErrImageNeverPull`: `kind load docker-image ... --name workboard-phase5` が成功したか。\n- 通信が通らない: `getent hosts` で名前解決、EndpointSlice で宛先、`kubectl get networkpolicy` でポリシーを順に見る。タイムアウトか `refused` かを区別する。\n- 8083 が使えない: 他のプロセスが使用中でないか確認し、解放できる場合だけ解放する。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-17",
+          "kind": "practice",
+          "title": "実習: Linux / macOS / WSL での前提",
+          "body": "スクリプトは PowerShell 版と同じ処理の Bash 版（`phases/05-security-and-failure/scripts/env.sh`・`up.sh`、導入は Phase 2 と共通の `tools/kind-install.sh`）があり、上の手順の「Linux / macOS / WSL (Bash)」に従います。Bash 4 以降、Docker（WSL は Docker Desktop の WSL 統合）、kubectl 1.34〜1.36 の条件は Phase 2 の「Linux / macOS / WSL での前提」と同じです。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-18",
+          "kind": "practice",
+          "title": "実習: 後片付け・再構築",
+          "body": "port-forward を実行しているターミナルで `Ctrl+C` を押すと入口だけが閉じます。クラスターとアプリは動き続けます。\n\n`workboard-phase5` を削除すると、DB のデータも失われます。クラスター名と消えるデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。ほかのクラスターは対象外です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kind delete cluster --name workboard-phase5",
+              "expected": "削除後、専用 kubeconfig `.kube/workboard-phase5.yaml` が残っていれば対象を確認してそのファイルだけ削除します。`db.env` は残して再利用できます。クラスター（PVC）を残したまま `db.env` を消さないでください。 構築スクリプトが別のパスワードを生成し、初期化済みの DB と一致しなくなります。"
+            }
+          ]
         }
       ],
       "diagram": {
         "type": "security",
         "title": "API 権限とアプリ通信を分ける",
-        "caption": "Phase 5 の予習。Namespace の権限と Pod の実行場所を区別して描きます。",
+        "caption": "workboard-phase5（Calico）の構成です。Namespace の権限と Pod の実行場所を区別して描きます。",
         "nodes": [
           {
             "id": "user",
@@ -2712,7 +3486,7 @@
           {
             "id": "authorization",
             "title": "操作する権限",
-            "description": "予習。RBAC は API に何を要求できるかを決めます。ServiceAccount はコンテナではありません。",
+            "description": "RBAC は API に何を要求できるかを決めます。ServiceAccount はコンテナではありません。",
             "nodeIds": [
               "user",
               "sa",
@@ -2744,44 +3518,104 @@
       "questions": [
         {
           "id": "q1",
-          "prompt": "K8s Secret のセキュリティ境界は？",
+          "prompt": "Kubernetes の Secret のセキュリティ境界はどこにあるのか？ 誰が値を読め、何が保護されないのか？",
           "rubric": [
-            "Secretはbase64だけで秘密を保護できないと説明する",
-            "APIアクセス権限・保存時の保護・配布先を含めて考える"
+            "Secret は base64 で暗号化ではなく、読める主体・exec できる主体は値を得られると説明する",
+            "保存時暗号化・RBAC・監査など別の対策の範囲に触れる"
           ]
         },
         {
           "id": "q2",
-          "prompt": "誰が Kubernetes API を操作できるべきか？",
+          "prompt": "誰が Kubernetes API を操作できるべきか？ 人、アプリの Pod、調査用のツールで、必要な権限はどう違うか？",
           "rubric": [
-            "人とワークロードを区別し最小権限を考える",
-            "操作の対象・範囲・監査の観点を説明する"
+            "人・アプリの Pod・調査ツールで必要な権限を分け、最小権限で説明する",
+            "不要な Pod に ServiceAccount トークンを自動マウントしない理由を述べる"
           ]
         },
         {
           "id": "q3",
-          "prompt": "k9s のような TUI を使っても、操作できる範囲は何で決まるのか（RBAC との関係）？",
+          "prompt": "k9s のような TUI を使っても、操作できる範囲は何で決まるのか？ RBAC とはどういう関係か？",
           "rubric": [
-            "k9sはkubeconfigの資格情報でKubernetes APIを呼ぶクライアントであると説明する",
-            "操作できる範囲はツールではなくRBACで決まり、TUIでも誤削除のリスクは同じと説明する"
+            "TUI の操作範囲はツールではなく資格情報に対する RBAC で決まると説明する",
+            "読み取り専用の主体や運用で編集・削除を避ける理由に触れる"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "Pod Security Standards の `enforce`・`warn`・`audit` をどう使い分けるか？ `restricted` を `enforce` にする条件は何か？",
+          "rubric": [
+            "enforce は Pod を拒否し、warn・audit は警告・記録であることを区別する",
+            "restricted を enforce にできる条件と、バージョン固定の意義に触れる"
+          ]
+        },
+        {
+          "id": "q5",
+          "prompt": "非 root 実行と読み取り専用のルートファイルシステムで、何が防げて何が防げないのか？ Web イメージを変更するか、マニフェストで補うかをどう判断するか？",
+          "rubric": [
+            "防げること（権限昇格・書き込み・不要な capability）と防げないこと（Secret の閲覧、アプリの脆弱性）を区別する",
+            "イメージ変更とマニフェストで補う方式の判断基準（他 Phase への影響など）を述べる"
+          ]
+        },
+        {
+          "id": "q6",
+          "prompt": "NetworkPolicy の効果は、どんな条件で、どんな実験によって確かめられるのか？ 対応しない CNI のとき何が起きるか？",
+          "rubric": [
+            "遮断するのは CNI で、対応しない CNI では効かないと説明する",
+            "許可と拒否の両方を実測で確かめ、タイムアウトと refused を見分けると述べる"
+          ]
+        },
+        {
+          "id": "q7",
+          "prompt": "Pod が Ready なのに通信できないとき、どんな順序で原因を切り分けるか？",
+          "rubric": [
+            "名前解決・EndpointSlice・ポート・NetworkPolicy の順に切り分ける手順を示す",
+            "kubelet の Probe は NetworkPolicy の影響を受けず、Ready のまま遮断され得ると説明する"
           ]
         }
       ],
       "memoFields": [
         {
           "id": "m1",
-          "label": "理解した概念"
+          "label": "実行日・OS・シェル"
         },
         {
           "id": "m2",
-          "label": "想定する構成と採用理由"
+          "label": "kind / kubectl / Kubernetes / Calico バージョン"
         },
         {
           "id": "m3",
-          "label": "必要な実験と期待結果"
+          "label": "Pod Security のラベルと、違反 Pod の拒否メッセージ"
         },
         {
           "id": "m4",
+          "label": "Web・API・PostgreSQL の実行ユーザーと書き込み可能な場所"
+        },
+        {
+          "id": "m5",
+          "label": "RBAC の許可と拒否の一覧"
+        },
+        {
+          "id": "m6",
+          "label": "NetworkPolicy の許可された通信と拒否された通信（成功・失敗の様子）"
+        },
+        {
+          "id": "m7",
+          "label": "ダミー負荷の結果"
+        },
+        {
+          "id": "m8",
+          "label": "故障実験 A〜F の症状・原因を特定した手がかり・復旧結果"
+        },
+        {
+          "id": "m9",
+          "label": "Secret の保護範囲について分かったこと・未検証の点"
+        },
+        {
+          "id": "m10",
+          "label": "後片付け・残したクラスター"
+        },
+        {
+          "id": "m11",
           "label": "疑問・未解決事項"
         }
       ],
@@ -2789,6 +3623,10 @@
         {
           "label": "一次設計書",
           "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 05 原本",
+          "path": "phases/05-security-and-failure/README.md"
         }
       ]
     },
@@ -2796,55 +3634,295 @@
       "id": 6,
       "slug": "eks",
       "title": "AWS上の責任を分ける",
-      "subtitle": "予習 / VPC・EKS・Node・Terraform",
+      "subtitle": "Terraform・VPC・EKS・Managed Node Group・ECR",
       "level": "cloud",
-      "implemented": false,
-      "estimatedMinutes": 40,
-      "summary": "マネージドサービスでも残る責任と、費用・公開範囲を設計します。",
+      "implemented": true,
+      "estimatedMinutes": 120,
+      "summary": "マネージドサービスでも残る責任と、費用・公開範囲を設計し、承認を得てから構築します。",
       "goals": [
-        "AWS と Kubernetes の責任分界、VPC、subnet、route/NAT、EKS、Managed Node Groups、IAM、ECR、Terraform。",
-        "実装前に設計条件と検証方法を説明できる"
+        "VPC、subnet、ルートテーブル、NAT Gateway が、EKS のノードの通信（ECR、API サーバー）にどう関わるかを説明する。",
+        "標準 EKS と Managed Node Group で、AWS が管理する部分と利用者が管理する部分を、実際のノード・設定から説明する。",
+        "IAM（cluster role、node role）と access entries が、AWS の権限と Kubernetes の権限をどう分けるかを説明する。",
+        "ECR にイメージを置き、EKS 上で WorkBoard の Web/API を動かす。",
+        "`terraform plan` の差分、料金要因、削除後に残り得る資産を読み、記録する。"
       ],
       "concepts": [
         {
-          "term": "EKS",
-          "description": "AWS管理のKubernetes Control Planeを利用するサービスです。",
-          "analogy": "建物管理を任せても利用者の仕事は残る職場"
+          "term": "責任共有（Managed Node Group）",
+          "description": "ノードの作成やドレイン付き更新は EKS が支援しますが、AMI の切り替え・台数・脆弱性対応は利用者の責任です。",
+          "analogy": "賃貸マンションの管理会社と入居者"
         },
         {
-          "term": "Managed Node Group",
-          "description": "EC2ノード群の管理を支援します。利用者には構成や更新の判断が残ります。",
-          "analogy": "設備の交換を支援する管理契約"
+          "term": "public/private subnet と NAT",
+          "description": "private subnet のノードはインターネットから直接見えず、外向きの通信やイメージ取得は NAT を通ります。",
+          "analogy": "受付だけが外に面した建物と社員用の通用口"
         },
         {
-          "term": "Terraform",
-          "description": "インフラの望む構成と差分をコードで扱います。",
-          "analogy": "建設図面と工事前の差分表"
+          "term": "access entries",
+          "description": "IAM の権限とは別に、Kubernetes 側の管理権限を IAM 主体へ明示的に付けます。",
+          "analogy": "建物に入る許可と金庫室に入る許可"
+        },
+        {
+          "term": "plan と state",
+          "description": "plan は変更の予告、state は Terraform が管理している資産の台帳です。台帳を失うと削除もできなくなります。",
+          "analogy": "工事の見積書と設備の管理台帳"
         }
       ],
       "sections": [
         {
-          "id": "preview",
-          "title": "この章は予習です",
-          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
-          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
-        },
-        {
           "id": "responsibility",
-          "title": "まず標準EKSで境界を見る",
-          "body": "設計書は最初に標準EKSとManaged Node Groupsを使い、Control Plane・Node・アドオン・アプリの担当範囲を観察する方針です。Auto Modeは後で管理主体や費用を比較する課題です。\n\nAWSに任せる部分と、自分で監視・更新・設定する部分を表にしてみましょう。"
+          "title": "まず標準 EKS で境界を見る",
+          "body": "Terraform は AWS provider のリソースで VPC・EKS・Managed Node Group・IAM・ECR を明示的に書いています。community module を使わないのは、構成要素を一つずつ読むためです。\n\nAPI endpoint は public のまま CIDR で制限し、0.0.0.0/0 は拒否します。WorkBoard は ECR のイメージで動かし、入口は port-forward（8086 番）だけです。DB は Phase 7 で RDS に移すため、ここでは使い捨ての Postgres です。",
+          "callout": "AWS の有料リソースを作るコマンドを含みます。ポータルはコマンドを実行しません。README の開始条件（明示的な承認・見積もり・予算通知・削除手順の確認）を満たしてから、自分のターミナルで実行してください。",
+          "steps": [
+            {
+              "title": "適用前に定義を検証する",
+              "description": "AWS に接続しない検証です。",
+              "command": "terraform -chdir=phases/06-eks-foundation/terraform validate",
+              "expected": "Success! と表示される。"
+            },
+            {
+              "title": "差分を読む",
+              "description": "認証情報を使い AWS に問い合わせます（作成はしません）。作られるリソースと料金要因を記録します。",
+              "command": "terraform -chdir=phases/06-eks-foundation/terraform plan",
+              "expected": "VPC・subnet・NAT・EKS・ノードグループ・ECR などの追加が並ぶ。"
+            },
+            {
+              "title": "ノードを観察する",
+              "description": "承認して apply した後に、ノードの配置と OS を確認します。",
+              "command": "kubectl get nodes -o wide",
+              "expected": "2 台のノードが private の IP で Ready になる。"
+            }
+          ]
         },
         {
           "id": "cost",
-          "title": "構築より前に決める条件",
-          "body": "region、AZ、Node、NAT、endpointのアクセス範囲、利用時間、削除後に残る資産を整理します。EKS料金だけでなくEC2・ALB・RDS・NAT等も見積もる必要があります。\n\n開始条件は利用の明示承認、見積もり確認、予算通知、クリーンアップ手順のレビューです。予算通知は課金停止の保証ではありません。",
-          "callout": "この章には実行コマンドを掲載していません。まだTerraform構成もAWSリソースも作成していません。"
+          "title": "費用と後片付けを先に決める",
+          "body": "cost-estimate.md に region・稼働時間・台数・AZ 構成をそろえた見積もりの観点があります。料金は公式ページで確認し、確認できない値は要確認のまま残します。予算通知は課金停止の保証ではありません。\n\naws-cleanup.md に、destroy の順序と、ALB・ENI・EBS・NAT・EIP・ECR・ロググループなど残り得る資産の点検手順があります。",
+          "callout": "削除は元に戻せません。aws-cleanup.md の手順で、対象と消えるデータを確認してから自分で実行してください。"
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "この Lab は AWS の有料リソースを作ります。 次の開始条件をすべて満たしてから、AWS を操作する手順に進みます。\n\n1. ユーザー（学習者本人）による AWS 利用の明示承認。 `terraform apply` と AWS を変更する操作は、承認した後に自分の手で実行します。この教材の作成者（AI を含む）は AWS を操作しません。\n2. 見積もり金額の確認。 cost-estimate.md（cost-estimate.md） の「要確認」の値を公式の料金ページで埋め、合計を確認します。\n3. 予算通知の設定。 AWS Budgets 等で通知を設定します。予算通知は課金の停止を保証しません。\n4. クリーンアップ手順のレビュー。 aws-cleanup.md（aws-cleanup.md） を読み、削除する日時を決めます。\n\nツールは Terraform 1.17.x、AWS CLI v2、kubectl 1.34〜1.36、Docker（Linux コンテナエンジン）、Git です。Terraform と AWS provider の版は `terraform/versions.tf` に固定してあります。AWS の認証情報は、環境変数や `~/.aws` のプロファイルなど、Git 管理外に置きます。実際のアカウント ID や認証情報、`terraform.tfvars`、`terraform.tfstate` を Git に入れないでください（`.gitignore` の対象です）。\n\n先の Phase を前提にしませんが、Kubernetes の基本（Pod・Deployment・Service・Job・Kustomize）は Phase 3 までで学んだものとします。この Phase の資材は `phases/06-eks-foundation/` だけで完結します。Web/API の定義は Phase 3 と重複しています（ADR-0007（../../docs/adr/0007-phase-directory-layout.md） の意図的な重複）。kind は使いません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 1. 適用前に読む（AWS に接続しない）",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS CLI を使う前に、操作対象のアカウントと region を確認します（各スクリプトは表示して `yes` の入力を求めます）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "terraform -chdir=phases/06-eks-foundation/terraform fmt -check -recursive\nterraform -chdir=phases/06-eks-foundation/terraform init -backend=false\nterraform -chdir=phases/06-eks-foundation/terraform validate\nkubectl kustomize phases/06-eks-foundation/kustomize/base",
+              "expected": "Kustomize の `eks` overlay は、Secret の入力ファイル `secrets/db.env` が必要です。ダミーを作って生成結果を読みます（この例ファイルは Git に入れません）。"
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "Copy-Item phases/06-eks-foundation/kustomize/overlays/eks/secrets/db.env.example phases/06-eks-foundation/kustomize/overlays/eks/secrets/db.env",
+              "expected": "",
+              "linuxCommand": "cp phases/06-eks-foundation/kustomize/overlays/eks/secrets/db.env.example phases/06-eks-foundation/kustomize/overlays/eks/secrets/db.env"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl kustomize phases/06-eks-foundation/kustomize/overlays/eks",
+              "expected": "観察する点は以下です。\n\n- `terraform init -backend=false` は provider を取得するだけで、AWS には接続しません。`validate` は文法と引数の整合を確認するもので、AWS 側で作成できるかは確認しません。\n- `terraform/` の変数に、`public_access_cidrs` の validation（`0.0.0.0/0` の拒否）があること。\n- `overlay` の出力で、イメージが `111122223333.dkr.ecr...`（ダミーのアカウント ID）になっていること。実際のアカウント ID は `scripts/deploy` が適用時にだけ差し替えます。\n- DB が `emptyDir` の Deployment であること（ADR-0012（decisions/0012-kustomize-eks-and-throwaway-db.md） は課題の後で読む）。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-3",
+          "kind": "practice",
+          "title": "実習: 2. （承認後）`terraform plan` の差分を読む",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS CLI を使う前に、操作対象のアカウントと region を確認します（各スクリプトは表示して `yes` の入力を求めます）。\n\n\n`terraform.tfvars.example` をコピーして `terraform.tfvars` を作り、自分の値に置き換えます。`allowed_account_id`、`admin_principal_arn`、`public_access_cidrs`（自分のグローバル IP の /32）が必須です。`terraform.tfvars` は Git に入れません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "Copy-Item phases/06-eks-foundation/terraform/terraform.tfvars.example phases/06-eks-foundation/terraform/terraform.tfvars",
+              "expected": "",
+              "linuxCommand": "cp phases/06-eks-foundation/terraform/terraform.tfvars.example phases/06-eks-foundation/terraform/terraform.tfvars"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "terraform -chdir=phases/06-eks-foundation/terraform plan",
+              "expected": "作成されるリソースの種類と数、料金が発生するもの（EKS クラスター、EC2、NAT Gateway、EIP）を一覧にして記録します。`plan` は何も作成しません。内容を理解し、費用に同意してから、次の `apply` に進みます。`apply` は承認した後にだけ実行します。"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "terraform -chdir=phases/06-eks-foundation/terraform apply",
+              "expected": "クラスターの作成には十数分かかります。完了後、`terraform output` で VPC ID や ECR の URL を確認します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-4",
+          "kind": "practice",
+          "title": "実習: 3. kubeconfig を作り、クラスターを観察する",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS CLI を使う前に、操作対象のアカウントと region を確認します（各スクリプトは表示して `yes` の入力を求めます）。\n\n\n新しいターミナルごとに最初の行を実行します。`env.ps1`（Bash は `env.sh`。`source` で読み込みます）は、このシェルだけで EKS 用の kubeconfig（`.kube/workboard-eks.yaml`）と region を使う設定です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": ". .\\phases\\06-eks-foundation\\scripts\\env.ps1\npowershell -NoProfile -File phases/06-eks-foundation/scripts/update-kubeconfig.ps1",
+              "expected": "",
+              "linuxCommand": "source phases/06-eks-foundation/scripts/env.sh\nbash phases/06-eks-foundation/scripts/update-kubeconfig.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl get nodes -o wide\nkubectl get pods -n kube-system -o wide\nkubectl auth can-i '*' '*'\nkubectl get nodes -o jsonpath='{.items[*].status.nodeInfo.osImage}'\nkubectl describe node",
+              "expected": "観察する点は、Node が 2 台（AZ が別）で Ready であること、OS イメージとカーネルの版、kubelet の版がコントロールプレーンの版に合っていること、`kube-system` に coredns・kube-proxy・aws-node（vpc-cni）があること、`can-i` が yes（access entry が効いている）であることです。ノードの OS を更新するのは誰か、EKS が自動で更新するもの・しないものを `describe node` の情報と合わせて書き出します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-5",
+          "kind": "practice",
+          "title": "実習: 4. イメージを ECR に置き、アプリを適用する",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS CLI を使う前に、操作対象のアカウントと region を確認します（各スクリプトは表示して `yes` の入力を求めます）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File phases/06-eks-foundation/scripts/push-images.ps1\npowershell -NoProfile -File phases/06-eks-foundation/scripts/deploy.ps1",
+              "expected": "`push-images` は ECR にログインし、API/Web を `linux/amd64` でビルドして `phase6` タグで push します。`deploy` は `db.env` が無ければランダムな値で作成し（値は表示しません）、overlay のダミーのレジストリを実アカウントの ECR に置き換えて適用し、DB・migration Job・API・Web の準備完了を待ちます。",
+              "linuxCommand": "bash phases/06-eks-foundation/scripts/push-images.sh\nbash phases/06-eks-foundation/scripts/deploy.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl -n workboard get pods,deploy,svc,job -o wide\nkubectl -n workboard describe pod -l app=workboard-api",
+              "expected": "期待結果は、Pod が 2 つのノードのどちらかに配置され、migration Job が Completed、API/Web/DB が Ready であることです。イメージの取得元（ECR）とイベントを `describe pod` で確認します。`ImagePullBackOff` になる場合は、「失敗時に確認すること」を見ます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-6",
+          "kind": "practice",
+          "title": "実習: 5. ブラウザーと curl で確認する",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS CLI を使う前に、操作対象のアカウントと region を確認します（各スクリプトは表示して `yes` の入力を求めます）。\n\n\n8086 番が使われていないことを確認し、次のコマンドを実行中のまま残します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8086:80",
+              "expected": "http://localhost:8086（http://localhost:8086） でダミータスクを作ります。別のターミナルで次の確認もできます。"
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -i http://localhost:8086/health/ready\ncurl.exe -s http://localhost:8086/api/v1/tasks",
+              "expected": "この入口はローカルの PC だけが使えます。インターネットには公開されていません（ALB は Phase 7）。",
+              "linuxCommand": "curl -i http://localhost:8086/health/ready\ncurl -s http://localhost:8086/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-7",
+          "kind": "practice",
+          "title": "実習: 6. ネットワークと権限を観察する",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS CLI を使う前に、操作対象のアカウントと region を確認します（各スクリプトは表示して `yes` の入力を求めます）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "terraform -chdir=phases/06-eks-foundation/terraform output\nkubectl get nodes -L topology.kubernetes.io/zone,node.kubernetes.io/instance-type,eks.amazonaws.com/nodegroup",
+              "expected": "どのノードがどの AZ にいるか、private subnet のノードが NAT 経由でイメージを取得していること、NAT の EIP（`nat_public_ips`）がノードの外向き通信の送信元であることを、構成図と対応づけます。API endpoint の許可 CIDR 外のネットワークから `kubectl get nodes` を試せる場合は、拒否されること（接続できない、またはタイムアウト）を確認します（任意）。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-8",
+          "kind": "practice",
+          "title": "実習: A. ノードを 1 台、計画的に外す（drain）",
+          "body": "ダミーのデータだけが入っていることを確認できた場合に実行してください。 対象はこの Phase のクラスターだけです。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl get pods -n workboard -o wide\nkubectl drain <ノード名> --ignore-daemonsets --delete-emptydir-data\nkubectl get pods -n workboard -o wide\nkubectl uncordon <ノード名>",
+              "expected": "Pod が別のノードに再配置されること、Pod が 1 台に集まり得ること、DB（emptyDir）がノードを移るとデータが消えることを観察します。`--delete-emptydir-data` の意味を調べます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-9",
+          "kind": "practice",
+          "title": "実習: B. DB Pod を削除する（emptyDir のデータは消える）",
+          "body": "ダミーのデータだけが入っていることを確認できた場合に実行してください。 対象はこの Phase のクラスターだけです。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl -n workboard delete pod -l app=workboard-postgres\nkubectl -n workboard rollout status deployment/workboard-postgres --timeout=180s",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -s http://localhost:8086/api/v1/tasks",
+              "expected": "タスクが消え（または API が一時的に失敗し）、migration Job を再実行しないとスキーマが戻らないことを観察します（`deploy` スクリプトの再実行で復旧）。Phase 3 の PVC との違いを書き出します。",
+              "linuxCommand": "curl -s http://localhost:8086/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-10",
+          "kind": "practice",
+          "title": "実習: C. （任意、費用・影響を確認した場合のみ）ノードの EC2 を 1 台停止する",
+          "body": "ダミーのデータだけが入っていることを確認できた場合に実行してください。 対象はこの Phase のクラスターだけです。\n\n\n承認した AWS 環境で、自分のクラスターのノードだけを対象にします。対象のインスタンス ID を、タグで絞って確認してから停止します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "aws ec2 describe-instances --filters \"Name=tag:eks:cluster-name,Values=workboard-learning\" \"Name=instance-state-name,Values=running\" --query \"Reservations[].Instances[].InstanceId\" --output text --region ap-northeast-1\naws ec2 terminate-instances --instance-ids <確認したインスタンス ID> --region ap-northeast-1\nkubectl get nodes -w",
+              "expected": "Auto Scaling グループが新しいノードを作ること、`kubectl get nodes` で NotReady → 新しい Node が参加するまでの時間、Pod の再スケジュールを観察します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-11",
+          "kind": "practice",
+          "title": "実習: 失敗時に確認すること",
+          "body": "- `terraform validate` / `plan` で変数のエラー: `terraform.tfvars` の必須値（`allowed_account_id`、`admin_principal_arn`、`public_access_cidrs`）。`0.0.0.0/0` は拒否される。\n- `plan` / `apply` が別のアカウントで失敗: `allowed_account_id` と現在の認証情報のアカウント。\n- `kubectl` がタイムアウトする: 自分の現在のグローバル IP が `public_access_cidrs` に含まれているか。IP が変わった場合は `terraform apply` で更新する。\n- `kubectl` が `Unauthorized` / `forbidden`: `admin_principal_arn` が、実際に使っている IAM ユーザー/ロールの ARN か（assumed-role のセッション ARN ではなくロールの ARN）。`aws sts get-caller-identity` を確認する。\n- ノードが NotReady / クラスターに参加しない: node role のポリシー、private subnet の NAT へのルート、`kubectl get nodes` のイベント。\n- `ImagePullBackOff`: ECR に `phase6` タグのイメージがあるか、`describe pod` のイベント、アカウント ID・region の置き換えが正しいか。ノードの ECR への経路（NAT）が有効か。\n- `deploy` の context エラー: `update-kubeconfig` を実行したか。context が `arn:aws:eks:<region>:<account>:cluster/<name>` であるか。\n- 8086 が使えない: 他のプロセスが使用中でないか確認し、解放できる場合だけ解放する。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-12",
+          "kind": "practice",
+          "title": "実習: Linux / macOS / WSL での前提",
+          "body": "スクリプトは PowerShell 版と同じ処理の Bash 版（`phases/06-eks-foundation/scripts/` の `env.sh`・`update-kubeconfig.sh`・`push-images.sh`・`deploy.sh`）があり、上の手順の「Linux / macOS / WSL (Bash)」に従います。Bash 4 以降、Docker、AWS CLI v2、Terraform 1.17.x、kubectl 1.34〜1.36 を使います。`--platform linux/amd64` を指定するため、Apple Silicon や ARM の Linux でもビルドできます（エミュレーションで遅くなる場合があります）。macOS 標準の bash 3.2 は対象外です（ADR-0008（../../docs/adr/0008-linux-support.md））。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-13",
+          "kind": "practice",
+          "title": "実習: 後片付け・再構築",
+          "body": "port-forward を実行しているターミナルで `Ctrl+C` を押すと入口だけが閉じます。クラスターとアプリは動き続け、課金も続きます。 学習を終えたら、必ず aws-cleanup.md（aws-cleanup.md） の手順で削除します。削除は元に戻せません。対象のアカウント・region・クラスター名と、消えるデータ（Phase 6 はダミーのみ）を確認し、削除してよいと明示的に判断した場合だけ `terraform destroy` を実行します。削除後は、残り得る資産の点検リストで確認し、翌日以降に請求を確認します。再構築は、`terraform apply` からやり直します（ECR のイメージも作り直しになります）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
         }
       ],
       "diagram": {
         "type": "eks",
         "title": "AWS 管理と利用者の責任",
-        "caption": "Phase 6 の将来案。標準 EKS の Control Plane は AWS が運用します。Managed Node Group でも Node/AMI 更新方針・アドオン・アプリ設定は利用者の責任として残ります。枠は実行配置と責任の説明で、VPC が Control Plane 全体を包含するという意味ではありません。",
+        "caption": "Phase 6 の構成（AWS 上は未検証）。標準 EKS の Control Plane は AWS が運用します。Managed Node Group でも Node/AMI 更新方針・アドオン・アプリ設定は利用者の責任として残ります。枠は実行配置と責任の説明で、VPC が Control Plane 全体を包含するという意味ではありません。",
         "nodes": [
           {
             "id": "tf",
@@ -2989,7 +4067,7 @@
           {
             "id": "overview",
             "title": "全体像",
-            "description": "Phase 6 の将来案。標準 EKS の Control Plane は AWS が運用します。Managed Node Group でも Node/AMI 更新方針・アドオン・アプリ設定は利用者の責任として残ります。枠は実行配置と責任の説明で、VPC が Control Plane 全体を包含するという意味ではありません。",
+            "description": "Phase 6 の構成（AWS 上は未検証）。標準 EKS の Control Plane は AWS が運用します。Managed Node Group でも Node/AMI 更新方針・アドオン・アプリ設定は利用者の責任として残ります。枠は実行配置と責任の説明で、VPC が Control Plane 全体を包含するという意味ではありません。",
             "nodeIds": [
               "tf",
               "vpc",
@@ -3008,36 +4086,108 @@
       "questions": [
         {
           "id": "q1",
-          "prompt": "EKS でも OS/Node の運用責任は残るか？",
+          "prompt": "EKS でも OS・ノードの運用責任は利用者に残るか？ 残るなら何が、誰の責任として残るか？",
           "rubric": [
-            "AWS管理のControl Planeと利用者側の責任を区別する",
-            "ノード・アドオン・アプリの更新や設定責任を挙げる"
+            "AMI 更新・パッチ・台数・脆弱性対応が利用者に残ると説明する",
+            "EKS が担う範囲（Control Plane、作成やドレイン付き更新の支援）と区別する"
           ]
         },
         {
           "id": "q2",
-          "prompt": "マネージド Node Group と Auto Mode の管理境界の差は？",
+          "prompt": "Managed Node Group と EKS Auto Mode では、管理の境界がどう違うか？ 何が見えなくなり、何が増えるか？",
           "rubric": [
-            "管理主体と観察可能な範囲を比較する",
-            "費用・制約・学習目的を判断条件に含める"
+            "Auto Mode ではノードやアドオンの管理も AWS 側に寄ると説明する",
+            "見えなくなる運用と、増える費用・制約に触れる"
+          ]
+        },
+        {
+          "id": "q3",
+          "prompt": "region はどこにするか？ 何を基準に選ぶか（料金、遅延、AZ 数、サービスの有無）？",
+          "rubric": [
+            "料金・遅延・AZ 数・サービスの有無など複数の観点を挙げる",
+            "選んだ region で料金を確認する必要を述べる"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "EKS の API endpoint を公開するか、制限するか？ 制限するなら何で、どの経路で `kubectl` と Terraform を使うか？",
+          "rubric": [
+            "public を CIDR で制限するか private にするかの判断を示す",
+            "kubectl・Terraform の経路と、IP が変わったときの影響に触れる"
+          ]
+        },
+        {
+          "id": "q5",
+          "prompt": "NAT Gateway を 1 つにするか、AZ ごとに置くか？ 費用と障害時の影響はどう変わるか？",
+          "rubric": [
+            "NAT の時間料金・データ処理料金と AZ 障害時の影響のトレードオフを述べる",
+            "学習用途としての判断根拠を示す"
+          ]
+        },
+        {
+          "id": "q6",
+          "prompt": "VPC を public/private の 2 AZ に分ける理由は何か？ ノードを public subnet に置く案と比べて何が違うか？",
+          "rubric": [
+            "ノードを private subnet に置く理由（直接の露出を避ける）を述べる",
+            "ALB は public、ノードと DB は private という役割分担を説明する"
+          ]
+        },
+        {
+          "id": "q7",
+          "prompt": "Terraform の state をどこに置くか？ 失うと何が起きるか？",
+          "rubric": [
+            "ローカルと remote の選択肢と、機密を含むため Git に入れない点を述べる",
+            "state を失うと destroy できなくなるリスクに触れる"
           ]
         }
       ],
       "memoFields": [
         {
           "id": "m1",
-          "label": "理解した概念"
+          "label": "実行日・OS・シェル"
         },
         {
           "id": "m2",
-          "label": "想定する構成と採用理由"
+          "label": "Terraform / AWS provider / kubectl / Kubernetes のバージョン"
         },
         {
           "id": "m3",
-          "label": "必要な実験と期待結果"
+          "label": "見積もり金額と承認した上限、予算通知の設定"
         },
         {
           "id": "m4",
+          "label": "`terraform plan` の差分（作成されるリソースの種類と数、料金が発生するもの）"
+        },
+        {
+          "id": "m5",
+          "label": "選んだ region・endpoint の制限・NAT の構成と理由"
+        },
+        {
+          "id": "m6",
+          "label": "ノードの AZ・OS イメージ・kubelet の版、アドオンの版"
+        },
+        {
+          "id": "m7",
+          "label": "AWS が管理する部分と利用者が管理する部分"
+        },
+        {
+          "id": "m8",
+          "label": "ECR へ push したイメージ、Pod の配置"
+        },
+        {
+          "id": "m9",
+          "label": "故障実験 A〜C の結果"
+        },
+        {
+          "id": "m10",
+          "label": "実際にかかった費用（請求の確認後）"
+        },
+        {
+          "id": "m11",
+          "label": "削除後に残っていた資産・点検の結果"
+        },
+        {
+          "id": "m12",
           "label": "疑問・未解決事項"
         }
       ],
@@ -3045,6 +4195,10 @@
         {
           "label": "一次設計書",
           "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 06 原本",
+          "path": "phases/06-eks-foundation/README.md"
         }
       ]
     },
@@ -3052,54 +4206,324 @@
       "id": 7,
       "slug": "integration",
       "title": "AWSサービスをつなぐ",
-      "subtitle": "予習 / ALB・RDS・Pod Identity",
+      "subtitle": "RDS・ALB・AWS Load Balancer Controller・Pod Identity・Helm",
       "level": "cloud",
-      "implemented": false,
-      "estimatedMinutes": 35,
-      "summary": "入口・データ・権限をマネージドサービスとどう分担するか考えます。",
+      "implemented": true,
+      "estimatedMinutes": 120,
+      "summary": "入口・データ・権限をマネージドサービスとどう分担するかを決め、公開範囲を絞って確かめます。",
       "goals": [
-        "ALB / Ingress、AWS Load Balancer Controller、RDS、Pod Identity、IAM least privilege、ネットワーク設計、Helm（chart の利用者として）。",
-        "実装前に設計条件と検証方法を説明できる"
+        "DB を Kubernetes の外（Amazon RDS）に置く理由を、責任分界・障害時の影響・費用から説明する。",
+        "RDS を private subnet に置き、EKS のノードからだけ接続できるようにするネットワーク（セキュリティグループ）を説明する。",
+        "AWS Load Balancer Controller を Helm chart で導入する前に、生成されるマニフェスト（ServiceAccount、RBAC、Deployment、Webhook、CRD）を読んで中身を把握する。",
+        "Pod Identity で、特定の ServiceAccount だけに IAM ロールを渡す仕組みと、最小権限の考え方を説明する。",
+        "Ingress（`alb`）で ALB を作り、許可した IP だけに公開して疎通を確認し、公開の制限と後片付けの順序を説明する。",
+        "`helm list` / `helm history` / `helm rollback` で release の状態と rollback の単位を観察する。"
       ],
       "concepts": [
         {
-          "term": "ALB / Controller",
-          "description": "Ingressの定義をControllerが処理してALBを管理します。",
-          "analogy": "受付方針と、それを設備へ反映する管理者"
-        },
-        {
-          "term": "RDS",
-          "description": "DBの運用機能をAWSへ任せる選択肢です。接続やデータ保護の設計は必要です。",
-          "analogy": "保管業務を専門業者と分担する倉庫"
+          "term": "RDS（DB の外部化）",
+          "description": "パッチ・バックアップ・フェイルオーバーを AWS に任せる代わりに、費用と AWS 依存が増えます。接続やデータ保護の設計は残ります。",
+          "analogy": "自炊をやめて給食センターと契約する"
         },
         {
           "term": "Pod Identity",
-          "description": "PodからAWSを呼ぶ際に、限定したIAM権限を渡す仕組みです。",
-          "analogy": "用途を絞った作業用の許可証"
+          "description": "特定の Namespace と ServiceAccount だけに IAM ロールを結び付け、一時的な認証情報を渡します。",
+          "analogy": "社員証ではなく部署限定の入館カード"
+        },
+        {
+          "term": "Helm（chart の利用者として）",
+          "description": "helm template で中身を読んでから、release 単位で install・history・rollback します。",
+          "analogy": "組み立て説明書を先に読み、作業を番号付きで記録する"
+        },
+        {
+          "term": "Ingress と ALB",
+          "description": "Ingress は API オブジェクトで、実際に ALB を作るのは Controller です。公開は許可した IP に限り、検証後は Ingress を先に消します。",
+          "analogy": "注文票と、それを受けて店を開ける店長"
         }
       ],
       "sections": [
         {
-          "id": "preview",
-          "title": "この章は予習です",
-          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
-          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
-        },
-        {
           "id": "path",
           "title": "入口とDBをクラスターの外へ",
-          "body": "ALB→Web→API→RDSという経路を設計します。ALBのIngressを扱うAWS Load Balancer Controllerと、IngressというAPIリソースは別です。\n\nRDSはDB運用を分担できますが、費用・AWS依存・ネットワーク接続・移行・復旧の検討が増えます。バックアップの取得だけでなく復元方法まで比較します。"
+          "body": "Phase 6 のクラスターが稼働していることが前提です。Phase 7 の Terraform は Phase 6 のファイルや state を読まず、クラスター名などの変数と data source で既存の環境を参照し、RDS・Pod Identity Agent・Controller 用の IAM ロールを足します。\n\nRDS のマスターパスワードは Secrets Manager が管理し、state にも Git にも平文を残しません。接続は PGSSLMODE=require で TLS を使います。ALB の health check は / で、DB 障害で全ターゲットが外れないようにしています。",
+          "callout": "AWS の有料リソースを作るコマンドを含みます。ポータルはコマンドを実行しません。README の開始条件（明示的な承認・見積もり・予算通知・削除手順の確認）を満たしてから、自分のターミナルで実行してください。",
+          "steps": [
+            {
+              "title": "chart の生成物を読む",
+              "description": "クラスターに適用せず、作られるリソースをファイルに書き出します。",
+              "command": "helm template aws-load-balancer-controller eks/aws-load-balancer-controller --version 3.6.2 --namespace kube-system --values phases/07-aws-integration/helm/aws-load-balancer-controller-values.yaml --set clusterName=workboard-learning --set region=ap-northeast-1 --set vpcId=vpc-0123456789abcdef0 --include-crds --output-dir .tools/lbc-rendered",
+              "expected": "ServiceAccount・RBAC・Deployment・Webhook・CRD などが書き出される。"
+            },
+            {
+              "title": "Ingress の状態を見る",
+              "description": "ALB が作られ、許可した IP だけに公開されているかを確認します。",
+              "command": "kubectl -n workboard describe ingress workboard",
+              "expected": "ADDRESS に ALB の DNS 名が入り、イベントにエラーがない。"
+            }
+          ]
         },
         {
           "id": "identity",
           "title": "公開と権限を限定する",
-          "body": "認証のないWorkBoardを恒常的にインターネットへ公開しない方針です。短時間の検証でも公開範囲・セキュリティグループ・後片付けを先に決めます。\n\nCSVをS3に置く発展課題では、Pod Identityで必要な操作だけを許可する計画です。S3やWorkerは任意の発展課題で、MVPの必須構成ではありません。"
+          "body": "認証のない WorkBoard を恒常的にインターネットへ公開しません。inbound-cidrs で学習者の IP に絞り、検証が終わったら Ingress を削除して ALB を消します。\n\nhelm history で release の履歴を見て、rollback の単位を確かめます。S3 への CSV エクスポートと Redis + Worker は任意の発展課題で、README に設計の観点だけを置いています。",
+          "callout": "AWS の有料リソースを作るコマンドを含みます。ポータルはコマンドを実行しません。README の開始条件（明示的な承認・見積もり・予算通知・削除手順の確認）を満たしてから、自分のターミナルで実行してください。",
+          "steps": [
+            {
+              "title": "release の履歴を見る",
+              "description": "rollback で戻る単位を確認します。",
+              "command": "helm history aws-load-balancer-controller -n kube-system",
+              "expected": "revision ごとの状態と chart の版が並ぶ。"
+            },
+            {
+              "title": "公開を終える",
+              "description": "ALB を先に消してから、Terraform の削除に進みます。",
+              "command": "kubectl -n workboard delete ingress workboard",
+              "expected": "しばらくして ALB とそのセキュリティグループが消える。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "この Lab は AWS の有料リソースを作ります（EKS に加えて RDS と ALB）。 次の開始条件をすべて満たしてから、AWS を操作する手順に進みます。\n\n1. ユーザー（学習者本人）による AWS 利用の明示承認。 `terraform apply` と AWS を変更する操作は、承認した後に自分の手で実行します。この教材の作成者（AI を含む）は AWS を操作しません。\n2. 見積もり金額の確認。 cost-estimate.md（cost-estimate.md） の「要確認」の値を公式の料金ページで埋め、Phase 6 の見積もりと合算した合計を確認します。\n3. 予算通知の設定。 AWS Budgets 等で通知を設定します。予算通知は課金の停止を保証しません。\n4. クリーンアップ手順のレビュー。 aws-cleanup.md（aws-cleanup.md） を読み、削除の順序（Ingress → Helm → RDS → Terraform）と日時を決めます。\n\n稼働中の EKS クラスターが必要です。 Phase 6 で作ったクラスターを使います（EKS を 2 回作らないため）。この Phase の Terraform は Phase 6 のディレクトリや state を読まず、変数 `cluster_name`（既定 `workboard-learning`）と data source で、次の約束を前提に既存のクラスターを見つけます。\n\n- クラスターが存在し、Managed Node Group のノードがクラスターのセキュリティグループを使っている。\n- private subnet に `kubernetes.io/role/internal-elb=1`、public subnet に `kubernetes.io/role/elb=1` のタグがある（ALB の配置に必要）。\n- ECR に `workboard-api` / `workboard-web` のリポジトリがある。\n- 自分の IAM 主体が、クラスターの管理者（access entry）になっている。\n\n別の方法で作ったクラスターを使う場合は、この約束を満たすか確認します。ツールは Terraform 1.17.x、AWS CLI v2、kubectl 1.34〜1.36、Helm 4.x（検証は 4.3.1）、Docker（Linux コンテナエンジン）です。Bash では `python3`（`write-db-secret` が JSON を読むために使用）も必要です。実際のアカウント ID、認証情報、`terraform.tfvars`、`terraform.tfstate`、`secrets/db.env` を Git に入れないでください（`.gitignore` の対象です）。\n\nこの Phase の資材は `phases/07-aws-integration/` だけで完結します。Web/API の定義は Phase 3・6 と重複しています（ADR-0007（../../docs/adr/0007-phase-directory-layout.md） の意図的な重複）。community の ingress-nginx は使いません（2026-03-24 に引退済み）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 1. 適用前に読む（AWS に接続しない）",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS を操作するスクリプトは、アカウント・region・クラスター名を表示して `yes` の入力を求めます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "terraform -chdir=phases/07-aws-integration/terraform fmt -check -recursive\nterraform -chdir=phases/07-aws-integration/terraform init -backend=false\nterraform -chdir=phases/07-aws-integration/terraform validate",
+              "expected": "`eks` overlay を読むため、Secret の入力ファイルにダミーを用意します（Git に入れません）。実際の値は、後で `write-db-secret` が Secrets Manager から作ります。"
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "Copy-Item phases/07-aws-integration/kustomize/overlays/eks/secrets/db.env.example phases/07-aws-integration/kustomize/overlays/eks/secrets/db.env",
+              "expected": "",
+              "linuxCommand": "cp phases/07-aws-integration/kustomize/overlays/eks/secrets/db.env.example phases/07-aws-integration/kustomize/overlays/eks/secrets/db.env"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl kustomize phases/07-aws-integration/kustomize/overlays/eks",
+              "expected": "観察する点は以下です。\n\n- Postgres の Deployment/StatefulSet がなく、`POSTGRES_HOST` がダミーの RDS エンドポイント、`PGSSLMODE=require` が ConfigMap にあること。\n- Ingress の `ingressClassName: alb` と `inbound-cidrs`（ダミー `203.0.113.10/32`）、health check パス。\n- イメージ参照がダミーのアカウント ID であること（`deploy` が実際の値に置き換えます）。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-3",
+          "kind": "practice",
+          "title": "実習: 2. Helm chart の中身を読む（AWS に接続しない）",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS を操作するスクリプトは、アカウント・region・クラスター名を表示して `yes` の入力を求めます。\n\n\nController を入れる前に、固定した版（chart 3.6.2）の chart と values を確認し、生成されるマニフェストを `helm template` で書き出して読みます。`.tools/` は Git 管理外です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "helm repo add eks https://aws.github.io/eks-charts\nhelm repo update eks\nhelm show chart eks/aws-load-balancer-controller --version 3.6.2\nhelm show values eks/aws-load-balancer-controller --version 3.6.2\nhelm template aws-load-balancer-controller eks/aws-load-balancer-controller --version 3.6.2 --namespace kube-system --values phases/07-aws-integration/helm/aws-load-balancer-controller-values.yaml --set clusterName=workboard-learning --set region=ap-northeast-1 --set vpcId=vpc-0123456789abcdef0 --include-crds --output-dir .tools/lbc-rendered",
+              "expected": "`.tools/lbc-rendered/` の生成物を読み、次の点を自分の言葉で書き出します。\n\n- 生成されるリソースの種類と数（ServiceAccount、ClusterRole/Role と Binding、Deployment、Service、Secret、Mutating/ValidatingWebhookConfiguration、IngressClass、CRD）。\n- RBAC: 何のリソースに、どの操作を許しているか（Secret の扱いも含む）。\n- Deployment: イメージの出所とタグ、引数、`securityContext`、replicas、`serviceAccountName`。\n- Webhook: どのリソースの作成・更新に介入し、`failurePolicy` が何か。Controller が止まるとクラスターの操作にどう影響するか。\n- Secret: 何のために、どう生成されるか（`helm upgrade` のたびにどうなるか）。\n- CRD: `helm install` と `helm upgrade` で CRD の扱いがどう違うか（公式手順の注意）。\n- 署名・出典・版: chart の取得元、`helm show chart` の情報、IAM ポリシーの出典（`ADR-0014` は課題の後で読む）。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-4",
+          "kind": "practice",
+          "title": "実習: 3. （承認後）`terraform plan` の差分を読む",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS を操作するスクリプトは、アカウント・region・クラスター名を表示して `yes` の入力を求めます。\n\n\n`terraform.tfvars.example` をコピーして `terraform.tfvars` を作り、自分の値に置き換えます。`allowed_account_id` が必須です。`terraform.tfvars` は Git に入れません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "Copy-Item phases/07-aws-integration/terraform/terraform.tfvars.example phases/07-aws-integration/terraform/terraform.tfvars",
+              "expected": "",
+              "linuxCommand": "cp phases/07-aws-integration/terraform/terraform.tfvars.example phases/07-aws-integration/terraform/terraform.tfvars"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "terraform -chdir=phases/07-aws-integration/terraform plan",
+              "expected": "作成されるリソース（RDS、DB subnet group、セキュリティグループ、パラメータグループ、IAM ロールとポリシー、Pod Identity Agent アドオン、association）の種類と数、料金が発生するもの（RDS）を記録します。RDS の `master_user_secret` は Terraform の state にパスワードを持たないこと、`plan` に値が出ないことを確認します。承認した後にだけ `apply` します。"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "terraform -chdir=phases/07-aws-integration/terraform apply",
+              "expected": "RDS の作成には十数分かかります。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-5",
+          "kind": "practice",
+          "title": "実習: 4. kubeconfig を作り、Controller を導入する",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS を操作するスクリプトは、アカウント・region・クラスター名を表示して `yes` の入力を求めます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": ". .\\phases\\07-aws-integration\\scripts\\env.ps1\npowershell -NoProfile -File phases/07-aws-integration/scripts/update-kubeconfig.ps1\npowershell -NoProfile -File phases/07-aws-integration/scripts/install-lbc.ps1",
+              "expected": "`install-lbc` は、固定した chart の版と values で `helm upgrade --install` を実行します。",
+              "linuxCommand": "source phases/07-aws-integration/scripts/env.sh\nbash phases/07-aws-integration/scripts/update-kubeconfig.sh\nbash phases/07-aws-integration/scripts/install-lbc.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "helm list -n kube-system\nhelm history aws-load-balancer-controller -n kube-system\nhelm get values aws-load-balancer-controller -n kube-system\nhelm get manifest aws-load-balancer-controller -n kube-system\nkubectl -n kube-system get deployment,pods -l app.kubernetes.io/name=aws-load-balancer-controller\nkubectl -n kube-system get daemonset eks-pod-identity-agent\nkubectl get ingressclass\nkubectl -n kube-system logs deployment/aws-load-balancer-controller --tail=20",
+              "expected": "期待結果は、release が `deployed`、Controller の Pod が Ready、Pod Identity Agent が各ノードで動いていること、ログに AWS の認可エラーが出ていないことです。`helm get manifest` と手順 2 の `helm template` の出力を比べます。\n\nrelease の状態と rollback の単位を観察します（Controller の replica 数を変えて戻します）。"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "helm upgrade aws-load-balancer-controller eks/aws-load-balancer-controller --version 3.6.2 -n kube-system --reuse-values --set replicaCount=1\nhelm history aws-load-balancer-controller -n kube-system\nhelm rollback aws-load-balancer-controller 1 -n kube-system\nhelm history aws-load-balancer-controller -n kube-system",
+              "expected": "revision が増え、rollback も新しい revision になることを確認します。rollback の対象が何か（Kubernetes のリソースか、Helm が管理する release の状態か、AWS 側のリソースは含まれるか）を書き出します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-6",
+          "kind": "practice",
+          "title": "実習: 5. イメージ、Secret、アプリを用意する",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS を操作するスクリプトは、アカウント・region・クラスター名を表示して `yes` の入力を求めます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File phases/07-aws-integration/scripts/push-images.ps1\npowershell -NoProfile -File phases/07-aws-integration/scripts/write-db-secret.ps1\n$env:WORKBOARD_ALLOWED_CIDR = '198.51.100.7/32'\npowershell -NoProfile -File phases/07-aws-integration/scripts/deploy.ps1",
+              "expected": "`198.51.100.7/32` はダミーです。自分のグローバル IP の /32 に置き換えます（`0.0.0.0/0` は `deploy` が拒否します）。`write-db-secret` は Secrets Manager から RDS のパスワードを取り出して Git 管理外の `secrets/db.env` に書きます（値は表示しません）。`deploy` は ECR のレジストリ、RDS のエンドポイント、許可 CIDR を実際の値に置き換えて適用し、migration Job の完了と API/Web の準備完了を待ちます。",
+              "linuxCommand": "bash phases/07-aws-integration/scripts/push-images.sh\nbash phases/07-aws-integration/scripts/write-db-secret.sh\nexport WORKBOARD_ALLOWED_CIDR=198.51.100.7/32\nbash phases/07-aws-integration/scripts/deploy.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl -n workboard get pods,deploy,svc,job,ingress\nkubectl -n workboard exec deploy/workboard-api -- printenv POSTGRES_HOST PGSSLMODE\nkubectl -n workboard logs job/workboard-migrate -c migrate",
+              "expected": "期待結果は、Postgres の Pod がなく、API の `POSTGRES_HOST` が RDS のエンドポイントで、migration Job が Completed、API/Web が Ready であることです。パスワードの値は表示しません。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-7",
+          "kind": "practice",
+          "title": "実習: 6. ALB と公開範囲を確認する",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS を操作するスクリプトは、アカウント・region・クラスター名を表示して `yes` の入力を求めます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl -n workboard get ingress\nkubectl -n workboard describe ingress workboard\nkubectl -n kube-system logs deployment/aws-load-balancer-controller --tail=20",
+              "expected": "ADDRESS に ALB の DNS 名が表示されるまで数分かかります。許可した IP のネットワークから確認します。"
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -i http://<ALB の DNS 名>/health/ready\ncurl.exe -s http://<ALB の DNS 名>/api/v1/tasks",
+              "expected": "ブラウザーで `http://<ALB の DNS 名>/` を開き、ダミータスクを作って再読み込みしても残ることを確認します。許可していない別のネットワーク（例: スマートフォンの回線）から同じ URL へ接続し、拒否される（接続できない、またはタイムアウト）ことを確認します。ALB のセキュリティグループに `inbound-cidrs` の CIDR だけが許可されていること、ターゲットグループが healthy であることを AWS のコンソールまたは CLI で確認します。検証が終わったら、すぐに aws-cleanup.md（aws-cleanup.md） の順序で ALB を削除します。恒常的な公開はしません。",
+              "linuxCommand": "curl -i http://<ALB の DNS 名>/health/ready\ncurl -s http://<ALB の DNS 名>/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-8",
+          "kind": "practice",
+          "title": "実習: 7. RDS を観察する",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS を操作するスクリプトは、アカウント・region・クラスター名を表示して `yes` の入力を求めます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "aws rds describe-db-instances --db-instance-identifier workboard-learning-db --region ap-northeast-1 --query \"DBInstances[0].[DBInstanceStatus,MultiAZ,StorageEncrypted,PubliclyAccessible,BackupRetentionPeriod,LatestRestorableTime]\"\nterraform -chdir=phases/07-aws-integration/terraform output",
+              "expected": "private（`PubliclyAccessible` が false）、暗号化、バックアップ保持、最新の復元可能時刻（PITR の目安）を確認します。RDS のセキュリティグループが、クラスターのセキュリティグループからの 5432 だけを許可していることも確認します。パスワードの値は表示も記録もしません。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-9",
+          "kind": "practice",
+          "title": "実習: 8. データ移行・バックアップ・復元の設計",
+          "body": "すべてリポジトリ直下で実行します。ステップ 1 は AWS に接続せず、いつでも実行できます。ステップ 2 以降は AWS を操作するため、開始条件を満たしてから実行します。AWS を操作するスクリプトは、アカウント・region・クラスター名を表示して `yes` の入力を求めます。\n\n\ndata-migration.md（data-migration.md） の手順に沿って、ローカルの DB（Phase 3 の kind のダミーデータ）を RDS に移す手順と、バックアップ・PITR・復元の設計を確認します。実機の移行・復元は、費用と影響を確認した場合だけ行います。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-10",
+          "kind": "practice",
+          "title": "実習: A. RDS を再起動して、API の Readiness への影響を観察する",
+          "body": "ダミーデータだけであることを確認でき、費用と影響を理解できた場合のみ実行してください。\n\n\n承認した AWS 環境で、この Phase の RDS だけを対象にします。再起動中は DB に接続できません（Single-AZ のため、数分間）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "aws rds reboot-db-instance --db-instance-identifier workboard-learning-db --region ap-northeast-1\nkubectl -n workboard get pods -w",
+              "expected": "別のターミナルで、`kubectl -n workboard get endpoints workboard-api` と、ALB の URL への `curl`（`/`、`/health/ready`、`/api/v1/tasks`）を繰り返し、API の Pod の Ready、Service のエンドポイント、ALB の応答がどう変わるか、復旧までの時間を記録します。ALB の health check が `/`（Web 自身）である理由を、この結果から説明します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-11",
+          "kind": "practice",
+          "title": "実習: B. Pod Identity の association を外して、Controller の権限を観察する",
+          "body": "ダミーデータだけであることを確認でき、費用と影響を理解できた場合のみ実行してください。\n\n\nassociation を AWS CLI または Terraform で外すと、Controller が AWS API を呼べなくなります。既存の ALB は残りますが、新しい Ingress の変更は反映されません。ログの認可エラーを観察し、元に戻します（`terraform apply` で association を再作成）。最小権限と、権限の欠落時の症状を整理します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-12",
+          "kind": "practice",
+          "title": "実習: C. 許可 CIDR を変えて、自分が拒否されることを観察する",
+          "body": "ダミーデータだけであることを確認でき、費用と影響を理解できた場合のみ実行してください。\n\n\nIngress の `inbound-cidrs` を別の値に変えて `apply` し、ALB に接続できなくなること、ALB のセキュリティグループが更新されることを確認します。`WORKBOARD_ALLOWED_CIDR` を元の値に戻して `deploy` します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-13",
+          "kind": "practice",
+          "title": "実習: D. Ingress を削除して、ALB が消えることを確認する",
+          "body": "ダミーデータだけであることを確認でき、費用と影響を理解できた場合のみ実行してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl -n workboard delete ingress workboard\naws elbv2 describe-load-balancers --region ap-northeast-1",
+              "expected": "Controller が動いている間に Ingress を消すと ALB も消えること、Controller を先に消すと ALB が残ることを、削除の順序の根拠として整理します（Controller を先に消す実験は、残存資産と課金が発生するため行いません）。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-14",
+          "kind": "practice",
+          "title": "実習: 失敗時に確認すること",
+          "body": "- `terraform plan` が cluster を見つけられない: `cluster_name` と region。`aws eks describe-cluster` が同じアカウントで成功するか。\n- `plan` で subnet が空: private subnet に `kubernetes.io/role/internal-elb=1` のタグがあるか。\n- RDS に接続できない: RDS のセキュリティグループがクラスターのセキュリティグループ（ノードが使うもの）を許可しているか。ノードが別のセキュリティグループを使っていないか。\n- `no pg_hba.conf entry ... SSL off`: `PGSSLMODE=require` が ConfigMap に入っているか（`kubectl kustomize` で確認）。\n- `password authentication failed`: Secrets Manager のパスワードがローテーションされた可能性。`write-db-secret` と `deploy` を再実行し、Pod を作り直す。\n- Controller が起動しない / Webhook のエラーで Service や Ingress を作成できない: `kubectl -n kube-system logs` と `describe pod`。Pod Identity の association の namespace と ServiceAccount 名、Pod Identity Agent が動いているか。\n- Ingress に ADDRESS が付かない: Controller のログの認可エラー（IAM ポリシー、association）。subnet のタグ。\n- ALB の疎通ができない: `WORKBOARD_ALLOWED_CIDR` が現在のグローバル IP か。ターゲットグループが healthy か。ALB の SG とノードの SG の規則。\n- `ImagePullBackOff`: ECR に `phase7` タグのイメージがあるか。\n- `helm` が接続できない: `. env.ps1`（Bash は `source env.sh`）を読み込んだか。kubeconfig の context。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-15",
+          "kind": "practice",
+          "title": "実習: Linux / macOS / WSL での前提",
+          "body": "スクリプトは PowerShell 版と同じ処理の Bash 版（`phases/07-aws-integration/scripts/` の `env.sh`・`update-kubeconfig.sh`・`push-images.sh`・`install-lbc.sh`・`write-db-secret.sh`・`deploy.sh`）があり、上の手順の「Linux / macOS / WSL (Bash)」に従います。Bash 4 以降、Docker、AWS CLI v2、Terraform 1.17.x、kubectl 1.34〜1.36、Helm 4.x、`python3` を使います。macOS 標準の bash 3.2 は対象外です（ADR-0008（../../docs/adr/0008-linux-support.md））。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-16",
+          "kind": "practice",
+          "title": "実習: 後片付け・再構築",
+          "body": "ALB・RDS・NAT・EKS は、削除するまで課金が続きます。 学習を終えたら、必ず aws-cleanup.md（aws-cleanup.md） の順序（Ingress → アプリ → Helm → RDS の判断と Terraform の削除 → Phase 6 の削除）で削除します。削除は元に戻せません。対象のアカウント・region・クラスター名と、消えるデータ（RDS のダミーデータ、最終スナップショットの有無）を確認し、削除してよいと明示的に判断した場合だけ `terraform destroy` を実行します。削除後は、残り得る資産の点検リストで確認し、翌日以降に請求を確認します。`db.env` とダンプファイルも削除します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
         }
       ],
       "diagram": {
         "type": "integration",
         "title": "Kubernetes と AWS サービスの連携",
-        "caption": "Phase 7 の予習。RDS/ALB/IAM は Kubernetes Pod ではありません。IAM 図は Controller の AWS API 操作権限で、アプリの RDS SQL 認証とは別です。",
+        "caption": "Phase 7 の構成（AWS 上は未検証）。RDS/ALB/IAM は Kubernetes Pod ではありません。IAM 図は Controller の AWS API 操作権限で、アプリの RDS SQL 認証とは別です。",
         "nodes": [
           {
             "id": "browser",
@@ -3320,7 +4744,7 @@
           {
             "id": "traffic",
             "title": "HTTP と SQL の経路",
-            "description": "将来の IP ターゲット案を例示。ALB は選ばれた Web Pod へ転送します。Service はターゲット選択の論理設定で、Controller はリクエストを中継しません。実装時に方式を確定します。",
+            "description": "IP ターゲット方式です。ALB は選ばれた Web Pod へ直接転送します。Service はターゲット選択の論理設定で、Controller はリクエストを中継しません。",
             "nodeIds": [
               "browser",
               "alb",
@@ -3356,44 +4780,128 @@
       "questions": [
         {
           "id": "q1",
-          "prompt": "なぜ PostgreSQL を RDS に置くのか？",
+          "prompt": "なぜ PostgreSQL を Kubernetes の Pod ではなく RDS に置くのか？ 何が楽になり、何が増えるか？",
           "rubric": [
-            "DB運用責任・バックアップ・障害対応の分離を説明する",
-            "費用・AWS依存・接続設計とのトレードオフを挙げる"
+            "パッチ・バックアップ・フェイルオーバーの運用責任が AWS に移ると説明する",
+            "費用・AWS 依存・ネットワーク設計という増えるものにも触れる"
           ]
         },
         {
           "id": "q2",
-          "prompt": "RDS の障害が API の Readiness にどう影響するか？",
+          "prompt": "RDS が停止・接続不能になったとき、API の Readiness はどう変わるか？ Service・ALB・ユーザーには何が見えるか？ ALB の health check はどこを見るべきか？",
           "rubric": [
-            "DB接続失敗によりreadyが503になり得ると説明する",
-            "liveはDB非依存でありスキーマの正常性は別確認と説明する"
+            "/health/ready が 503 になり Service の宛先から外れると説明する",
+            "ALB の health check を / にするか /health/ready にするかの影響を比較する"
           ]
         },
         {
           "id": "q3",
-          "prompt": "第三者の Helm chart を導入するとき、何を確認すれば中身を把握したと言えるか？",
+          "prompt": "第三者の Helm chart を導入するとき、何を確認すれば「中身を把握した」と言えるか？",
           "rubric": [
-            "chartのバージョンとvaluesを固定し、helm templateで生成されるリソースを確認すると説明する",
-            "RBAC・Webhook・CRDなど権限や影響範囲の大きいリソースと、配布元の信頼性を確認する"
+            "生成物（RBAC・Webhook・Deployment・CRD・Secret）を helm template で読むと述べる",
+            "出典・版・values の固定、IAM 権限、Webhook の failurePolicy のいずれかに触れる"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "RDS のネットワーク（subnet、セキュリティグループ）はどう設計するか？ 誰からのどの通信だけを許可するか？",
+          "rubric": [
+            "private subnet とセキュリティグループ参照（ノード側からの 5432 のみ）を述べる",
+            "VPC 全体や 0.0.0.0/0 に開けない理由を述べる"
+          ]
+        },
+        {
+          "id": "q5",
+          "prompt": "DB のパスワードをどこで生成・保管し、Pod にどう渡すか？ ローテーションされたらどうなるか？",
+          "rubric": [
+            "Secrets Manager で管理し、state や Git に平文を残さない点を述べる",
+            "ローテーション時の追従（再取得・Pod の再作成）に触れる"
+          ]
+        },
+        {
+          "id": "q6",
+          "prompt": "AWS Load Balancer Controller に、AWS API を呼ぶ権限をどう渡すか？ なぜ最小権限が必要か？ ノードのロールに付けるのと何が違うか？",
+          "rubric": [
+            "Pod Identity で ServiceAccount 単位に IAM ロールを渡すと説明する",
+            "ノードのロールに付ける方式と最小権限の観点で比較する"
+          ]
+        },
+        {
+          "id": "q7",
+          "prompt": "ALB を公開する範囲をどう制限するか？ 検証後に何を、どの順序で片付けるか？",
+          "rubric": [
+            "inbound-cidrs による許可 IP の制限と、短時間の検証用途に限ることを述べる",
+            "Ingress を先に削除して ALB を消す順序と理由を述べる"
+          ]
+        },
+        {
+          "id": "q8",
+          "prompt": "ローカルの DB のデータをどう RDS に移すか？ バックアップと復元（時点復元を含む）をどう設計するか？",
+          "rubric": [
+            "pg_dump / pg_restore による論理移行を VPC 内の経路で行うと述べる",
+            "自動バックアップ・PITR・スナップショットの違いと、復元は新しいインスタンスになる点に触れる"
           ]
         }
       ],
       "memoFields": [
         {
           "id": "m1",
-          "label": "理解した概念"
+          "label": "実行日・OS・シェル"
         },
         {
           "id": "m2",
-          "label": "想定する構成と採用理由"
+          "label": "Terraform / AWS provider / Helm / kubectl のバージョン、Controller の chart と app のバージョン"
         },
         {
           "id": "m3",
-          "label": "必要な実験と期待結果"
+          "label": "見積もり金額（Phase 6 との合計）と承認した上限、予算通知の設定"
         },
         {
           "id": "m4",
+          "label": "`helm template` で確認した生成物（種類・RBAC・Webhook・Secret・CRD）と気づいた点"
+        },
+        {
+          "id": "m5",
+          "label": "`terraform plan` の差分（作成されるリソース、料金が発生するもの）"
+        },
+        {
+          "id": "m6",
+          "label": "RDS の構成（subnet、セキュリティグループ、暗号化、バックアップ、TLS）"
+        },
+        {
+          "id": "m7",
+          "label": "パスワードの管理方法とローテーション時の影響"
+        },
+        {
+          "id": "m8",
+          "label": "`helm list` / `history` / `rollback` の結果"
+        },
+        {
+          "id": "m9",
+          "label": "Pod Identity の association と IAM ポリシーの評価（最小権限として十分か）"
+        },
+        {
+          "id": "m10",
+          "label": "ALB の公開範囲（許可 IP と拒否の確認）"
+        },
+        {
+          "id": "m11",
+          "label": "データ移行・バックアップ・復元の設計"
+        },
+        {
+          "id": "m12",
+          "label": "故障実験 A〜D の結果"
+        },
+        {
+          "id": "m13",
+          "label": "実際にかかった費用（請求の確認後）"
+        },
+        {
+          "id": "m14",
+          "label": "削除後に残っていた資産・点検の結果"
+        },
+        {
+          "id": "m15",
           "label": "疑問・未解決事項"
         }
       ],
@@ -3401,6 +4909,10 @@
         {
           "label": "一次設計書",
           "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 07 原本",
+          "path": "phases/07-aws-integration/README.md"
         }
       ]
     },
@@ -3408,54 +4920,385 @@
       "id": 8,
       "slug": "pipeline",
       "title": "変更と運用をつなぐ",
-      "subtitle": "予習 / CI・CD・GitOps・SLI",
+      "subtitle": "CI/CD・Argo CD・Prometheus・SLO",
       "level": "review",
-      "implemented": false,
-      "estimatedMinutes": 35,
-      "summary": "変更を安全に届け、観察し、戻すまでを一つの流れで考えます。",
+      "implemented": true,
+      "estimatedMinutes": 100,
+      "summary": "変更を安全に届け、観察し、戻すまでを一つの流れにします。GitOps と監視は kind で試します。",
       "goals": [
-        "GitHub Actions、CI/CD、デプロイ戦略、GitOps、ログ・メトリクス・トレース、SLO、コスト最適化。",
-        "実装前に設計条件と検証方法を説明できる"
+        "GitHub Actions の CI（テスト・ビルド・マニフェスト検証）と、手動承認つきの CD の構成を読み、どの段階で何を止められるかを説明する。",
+        "GitHub OIDC による一時認証で、長期のアクセスキーを置かずに AWS へ接続する仕組みと、ロールを引き受けられる条件を説明する。",
+        "kind 上の Argo CD で、Git を正とした同期、手動変更（drift）の検出と自動修復、不正なコミットの revert による復旧を観察する。",
+        "Git に置けない値（Secret）が GitOps で問題になる理由と、この教材での扱いを説明する。",
+        "Prometheus で API のメトリクスを集め、リクエスト率・エラー率・p95 応答時間を PromQL で求める。",
+        "SLI/SLO を学習用に定義し、故障実験の前後でメトリクスがどう動くかを観察する。",
+        "Helm と Kustomize の違いを踏まえ、自アプリのマニフェスト管理の方式を比較して判断する。",
+        "AWS の費用を Cost Explorer・Budgets で確認し、不要な環境を削除する流れを組み立てる。"
       ],
       "concepts": [
         {
           "term": "CI / CD",
-          "description": "変更の検査と、環境への反映を分けて設計します。",
+          "description": "CI はテスト・ビルド・マニフェストの検証、CD は環境への反映です。CD は手動承認制にし、AWS へは OIDC の一時認証で接続します。",
           "analogy": "出荷検査と配送の工程"
         },
         {
-          "term": "GitOps",
-          "description": "Gitの定義と実環境の差を継続的に調整する運用方式です。",
-          "analogy": "正本の台帳と現物を定期照合する係"
+          "term": "GitOps（Argo CD）",
+          "description": "Git の定義と実環境の差を検出し、同期で Git の状態に合わせます。戻すときは Git を revert します。",
+          "analogy": "正本の台帳と現物を照合する係"
+        },
+        {
+          "term": "Prometheus と PromQL",
+          "description": "API の /metrics から定期的に値を集め、リクエスト率・エラー率・p95 応答時間を式で求めます。",
+          "analogy": "定期的に検針して使用量を計算する係"
         },
         {
           "term": "SLI / SLO",
-          "description": "利用者視点の指標と、その目標値を分けて定義します。",
+          "description": "SLI は利用者から見た指標、SLO はその目標値です。分子・分母・除外条件・期間を決め、測る前に達成とは言いません。",
           "analogy": "測った所要時間と約束する所要時間"
         }
       ],
       "sections": [
         {
-          "id": "preview",
-          "title": "この章は予習です",
-          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
-          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
-        },
-        {
           "id": "delivery",
           "title": "テスト・反映・復旧を切り分ける",
-          "body": "CIでlint・APIテスト・イメージビルド・構文確認を行い、CDは最初に手動承認制とする計画です。GitOpsは対象数や運用能力を踏まえて方式比較後に追加します。\n\n失敗した変更をどこで止めるか、認証情報をどこへ渡すか、どの版へ戻すかも設計対象です。"
+          "body": ".github/workflows/ci.yaml は push と pull request でテスト・ビルド・kustomize・Terraform・スクリプトを検証します。cd.yaml は手動実行だけで、GitHub の environment の承認を待ってから ECR に push し EKS に適用します。AWS 側の準備をするまでは動きません。\n\nArgo CD は専用クラスター workboard-phase8 で試します。同期対象は GitHub 上のリポジトリなので、自分の fork に push するまで同期できません。DB のパスワードは Git に置かず、構築スクリプトが Secret を事前に作ります。",
+          "callout": "ポータルはコマンドを実行しません。以下は自分のターミナルで実行する手順の抜粋です。",
+          "steps": [
+            {
+              "title": "専用クラスターを作る",
+              "description": "WorkBoard・Argo CD・Prometheus を導入します。",
+              "command": "powershell -NoProfile -File phases/08-devops-observability/scripts/up.ps1",
+              "expected": "API 3/3、Web 2/2、Prometheus と Argo CD の Pod が Running。",
+              "linuxCommand": "bash phases/08-devops-observability/scripts/up.sh"
+            },
+            {
+              "title": "同期の状態を見る",
+              "description": "push 前は同期できないことも観察結果です。",
+              "command": "kubectl --context kind-workboard-phase8 -n argocd get application workboard",
+              "expected": "push 前は Unknown（ComparisonError）、push 後は Synced / Healthy。"
+            },
+            {
+              "title": "手動の変更で drift を作る",
+              "description": "Git と異なる状態にして、Argo CD が差分を検出するかを見ます。",
+              "command": "kubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=5",
+              "expected": "Application が OutOfSync になり、同期で 2 Pod に戻る。"
+            }
+          ]
         },
         {
           "id": "observe",
           "title": "測った事実で改善する",
-          "body": "応答時間、HTTPエラー率、再起動、資源使用量を観察します。成功率やp95応答時間をSLIとし、期間と母数を含めて目標を決めます。\n\n測定前のSLO達成宣言や、予算通知だけで費用が止まるという判断は避けます。運用・復旧・コストを同じ改善サイクルへ戻します。"
+          "body": "Prometheus は kubernetes_sd で API の Pod を見つけ、/metrics を集めます。slo.md に、ヘルスチェックを除いた成功率と p95 応答時間の定義があります。\n\nNginx が返す 504/502 は API に届かないため、API のメトリクスには現れません。メトリクスで分からないことは、ログやイベントで補います。",
+          "steps": [
+            {
+              "title": "Prometheus を開く",
+              "description": "WorkBoard とは別のポートです。",
+              "command": "kubectl --context kind-workboard-phase8 -n monitoring port-forward --address 127.0.0.1 svc/prometheus 8087:9090",
+              "expected": "http://localhost:8087 で Prometheus が開く。"
+            },
+            {
+              "title": "リクエストを流し続ける",
+              "description": "応答と時刻を記録し、PromQL の値と比べます。",
+              "command": "powershell -NoProfile -File phases/08-devops-observability/scripts/watch-http.ps1 http://localhost:8084/api/v1/tasks 0.5",
+              "expected": "時刻・ステータス・秒数が一定間隔で表示される。",
+              "linuxCommand": "bash phases/08-devops-observability/scripts/watch-http.sh http://localhost:8084/api/v1/tasks 0.5"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "Phase 4（Probe、Rolling Update、`/metrics`）と Phase 6・7（ECR、EKS、`eks` overlay、Terraform）の内容を理解していること。Linux コンテナエンジンが動く Docker（Windows / macOS は Docker Desktop、Linux は Docker Engine または Docker Desktop）、kubectl 1.34〜1.36、kind v0.33.0（導入は Phase 2 と共通の `tools/kind-install.ps1`。Bash は `tools/kind-install.sh`）が必要です。ノードは Kubernetes v1.35.8、DB は `postgres:17.11-bookworm`、Argo CD は v3.6.1、Prometheus は v3.15.1 です。インターネットに接続できる環境が必要です（Argo CD の install マニフェストを GitHub から、Prometheus のイメージを quay.io から取得します）。\n\nこの Lab の kind 部分（GitOps と可観測性）は AWS 費用がかかりません。 新しい kind クラスター `workboard-phase8`（control-plane 1 台と worker 2 台）を作り、Phase 2 の `workboard-lab`、Phase 3 の `workboard-phase3` などの既存クラスターと kubeconfig は変更しません。ノードが 3 台、Argo CD と Prometheus が加わるため、Docker のメモリ（目安として 6 GiB 以上の空き）と CPU が必要です。他の Lab のクラスターは止めてから始めてください。\n\nポートは WorkBoard が 8084、Argo CD の画面が 8085、Prometheus の画面が 8087 です（8080〜8083 は他の Phase が使います）。DB はダミーデータ専用です。\n\nCI/CD の節の AWS 操作（Terraform の apply、ECR への push、EKS への適用、Cost Explorer・Budgets の設定）は、AWS の有料リソースを使う Phase 6・7 のクラスターが稼働していることと、利用の明示承認が前提です。 この教材の作成者（AI を含む）は AWS を操作せず、CD も実行していません。手順は学習者が承認後に自分の手で行います。\n\nArgo CD が同期するのは 自分が push できる公開リポジトリ です。このリポジトリを GitHub で fork（または自分のアカウントへ複製）して clone しておきます。同期先は特定の作成者のリポジトリに固定されておらず、構築スクリプトが次の順で決めます。\n\n- リポジトリの URL: 環境変数 `GITOPS_REPO_URL`。無ければ、この clone の `origin`（`git remote get-url origin`）。SSH 形式（`git@github.com:…`）は HTTPS に直し、URL に含まれる認証情報は取り除きます。\n- リビジョン: 環境変数 `GITOPS_REVISION`。無ければ、今いるブランチ。\n\n`origin` を読めない場合（Git 未導入、`origin` が無い、所有者の違いによる `dubious ownership` など）は、git のメッセージを表示して止まります。そのときは `GITOPS_REPO_URL` と `GITOPS_REVISION` を設定してください。\n\nこの Phase のファイルは `phases/08-devops-observability/` だけで完結します。Web/API の定義は Phase 4 と重複しています（Phase を独立させるための意図的な重複です。ADR-0007（../../docs/adr/0007-phase-directory-layout.md））。例外はリポジトリ直下の `.github/workflows/`（GitHub が読む場所のため）です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 1. 適用前に生成結果を読む",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase8` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。\n\n\n新しいターミナルごとに最初の行を実行します。`env.ps1`（Bash は `env.sh`。実行ではなく `source` で読み込みます）はこのシェルだけで Phase 8 用の kubeconfig（`.kube/workboard-phase8.yaml`）を使う設定です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": ". .\\phases\\08-devops-observability\\scripts\\env.ps1",
+              "expected": "",
+              "linuxCommand": "source phases/08-devops-observability/scripts/env.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl kustomize phases/08-devops-observability/kustomize/overlays/kind\nkubectl kustomize phases/08-devops-observability/kustomize/monitoring",
+              "expected": "Secret の入力は Git 管理外の `phases/08-devops-observability/kustomize/overlays/kind/secrets/db.env` です。まだ無い場合、次の「2. 構築」のスクリプトがローカル専用のランダムな値で作成します。自分で用意する場合は、例ファイル（ダミー値のみ）をコピーして値を変えます。"
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "Copy-Item phases/08-devops-observability/kustomize/overlays/kind/secrets/db.env.example phases/08-devops-observability/kustomize/overlays/kind/secrets/db.env",
+              "expected": "観察する点は以下です。\n\n- `overlays/kind` の出力に Secret が含まれず、Deployment が `workboard-db` という名前の Secret を参照していること。Phase 4 の `overlays/kind` との違い。\n- 移行用 Job に Argo CD 用の annotation（`argocd.argoproj.io/hook`）が付いていること。\n- Prometheus の Role と RoleBinding が `workboard` namespace に置かれ、`monitoring` の ServiceAccount に結び付いていること。ClusterRole が無いこと。\n- `prometheus.yml` の `relabel_configs` が、どの Pod のどのポートだけを残すか。",
+              "linuxCommand": "cp phases/08-devops-observability/kustomize/overlays/kind/secrets/db.env.example phases/08-devops-observability/kustomize/overlays/kind/secrets/db.env"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-3",
+          "kind": "practice",
+          "title": "実習: 2. 構築",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase8` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File tools/kind-install.ps1\npowershell -NoProfile -File phases/08-devops-observability/scripts/up.ps1",
+              "expected": "`kind-install` は導入済みなら何もしません。構築スクリプトは次の順で、固定秒数の sleep ではなく実際の状態を待ちます。\n\n1. `workboard-phase8` クラスターの作成（存在しなければ）。同名クラスターのみ・kubeconfig のみ残っている場合は確認のため停止します。他のクラスターには何も適用しません。\n2. API/Web イメージのビルドと `kind load docker-image`（`imagePullPolicy: Never`）。\n3. `db.env` が無ければランダムなパスワードを生成して作成（値は表示しません）。既にあれば変更しません。\n4. `workboard` namespace と Secret `workboard-db` を作成し、`overlays/kind` を `kubectl apply -k` で適用（移行 Job は毎回削除してから）。\n5. `argocd` namespace に Argo CD v3.6.1 の公式 `install.yaml` を server-side apply。`monitoring` に Prometheus を適用。\n6. PostgreSQL・migration Job・Web/API・Prometheus・Argo CD の準備完了と、Application の CRD が使えることを待機。\n7. `argocd/application.yaml` を適用し、`repoURL` / `targetRevision` を「前提条件」の順で決めた値に書き換えます（ファイルの値はプレースホルダーです）。使った値は「Argo CD の同期対象: …」として表示されます。\n\n期待結果は、Node が 3 台とも Ready、API が 3/3、Web が 2/2、StatefulSet が 1/1、migration Job が Completed、`monitoring` の Prometheus が 1/1、`argocd` の 7 つの Pod が Running です。Application `workboard` は、Git に Phase 8 の資材が push されるまで `ComparisonError` で `Unknown` になります（次の節の 5 で確認します）。",
+              "linuxCommand": "bash tools/kind-install.sh\nbash phases/08-devops-observability/scripts/up.sh"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-4",
+          "kind": "practice",
+          "title": "実習: 3. WorkBoard とメトリクスを確認する",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase8` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。\n\n\n3 つの `port-forward` を、それぞれ別のターミナルで実行したままにします。8084・8085・8087 番が使われていないことを先に確認します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8084:80\nkubectl --context kind-workboard-phase8 -n monitoring port-forward --address 127.0.0.1 svc/prometheus 8087:9090\nkubectl --context kind-workboard-phase8 -n argocd port-forward --address 127.0.0.1 svc/argocd-server 8085:443",
+              "expected": "http://localhost:8084（http://localhost:8084） でダミータスクを作ります。次に、リクエストを一定間隔で送り続けます（別のターミナル）。"
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File phases/08-devops-observability/scripts/watch-http.ps1 http://localhost:8084/api/v1/tasks 0.5",
+              "expected": "`port-forward` は起動時に選ばれた 1 つの Web Pod にだけつながります。その Pod が削除されると接続が切れるので、切れたらコマンドを再実行します。\n\nPrometheus の接続確認と、収集対象の確認です。",
+              "linuxCommand": "bash phases/08-devops-observability/scripts/watch-http.sh http://localhost:8084/api/v1/tasks 0.5"
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -s http://localhost:8087/-/ready\ncurl.exe -s \"http://localhost:8087/api/v1/query?query=up\"",
+              "expected": "http://localhost:8087/targets（http://localhost:8087/targets） で `workboard-api` の対象が API Pod の数だけ `UP` になっていることを確認します。Pod の名前と IP がどのラベルから来ているかも見ます。",
+              "linuxCommand": "curl -s http://localhost:8087/-/ready\ncurl -s \"http://localhost:8087/api/v1/query?query=up\""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-5",
+          "kind": "practice",
+          "title": "実習: 4. PromQL でリクエスト率・エラー率・p95 を求める",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase8` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。\n\n\nhttp://localhost:8087/graph（http://localhost:8087/graph） の入力欄に貼り付けて、それぞれ Table と Graph で見ます（`watch-http` を流したままにします）。ヘルスチェック（`/health/*`）は kubelet が呼ぶため、利用者のリクエストと分けて除外しています。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "sum(rate(workboard_http_requests_total{route!~\"/health/.*\"}[1m]))",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "sum(rate(workboard_http_requests_total{route!~\"/health/.*\",status=~\"5..\"}[5m])) / sum(rate(workboard_http_requests_total{route!~\"/health/.*\"}[5m]))",
+              "expected": ""
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "histogram_quantile(0.95, sum by (le) (rate(workboard_http_request_duration_seconds_bucket{route!~\"/health/.*\"}[5m])))",
+              "expected": ""
+            },
+            {
+              "title": "手順 4 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "sum by (route, status) (increase(workboard_http_requests_total{route!~\"/health/.*\"}[5m]))",
+              "expected": ""
+            },
+            {
+              "title": "手順 5 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "process_resident_memory_bytes{job=\"workboard-api\"}",
+              "expected": ""
+            },
+            {
+              "title": "手順 6 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "changes(process_start_time_seconds{job=\"workboard-api\"}[1h])",
+              "expected": "観察する点は以下です。\n\n- リクエスト率が `watch-http` の間隔（0.5 秒なら毎秒約 2）と合うか。\n- 4xx（存在しない ID など）がエラー率に入るか入らないか。入れるかどうかは、SLI の定義で決めること。\n- ヒストグラムの p95 が、バケットの境界の値になる理由。\n- `process_*` から読めるもの（API Pod の再起動、メモリ）と、読めないもの（Web Pod、ノード、DB の状態）。\n\nエラー率の式の分母が 0 のときの表示（`NaN` や空）と、新しく現れた系列に対する `increase` の値も観察します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-6",
+          "kind": "practice",
+          "title": "実習: 5. Argo CD を開き、push 前の状態を確認する",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase8` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。\n\n\n初期の管理者パスワードは、ローカルの Secret から取り出します（この kind クラスターだけの値です。共有や記録をしないでください）。ユーザー名は `admin` です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | ForEach-Object { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) }",
+              "expected": "https://localhost:8085（https://localhost:8085） を開きます（自己署名証明書の警告が出ます。この `port-forward` 経由の localhost だけで使います）。",
+              "linuxCommand": "kubectl --context kind-workboard-phase8 -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n argocd get application workboard\nkubectl --context kind-workboard-phase8 -n argocd get application workboard -o jsonpath='{.spec.source.repoURL}{\"\\n\"}{.spec.source.targetRevision}{\"\\n\"}{.status.conditions[*].message}{\"\\n\"}'",
+              "expected": "Application が参照する `repoURL`・`targetRevision`・`path` と、同期の状態を確認します。Git に push されていないリビジョンは同期できません。 clone した直後や、Phase 8 の変更を自分のリポジトリにまだ push していない場合は `ComparisonError` になります。\n\n同期できるようにする手順は 2 通りです。どちらも、自分でコミットし push する操作を伴います（push は学習者が自分の判断で行います）。\n\n- 自分の fork に Phase 8 の資材を push し、`up` を再実行する。`origin` が自分の fork で、push したブランチにいれば、環境変数は要りません。別のリポジトリやブランチを同期したいときは、下のように環境変数を付けて再実行します。\n- リポジトリが非公開の場合、Argo CD にリポジトリの認証情報の登録が必要です。この Lab は公開リポジトリだけを前提にします（非公開リポジトリの認証情報の扱いは対象外）。"
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "$env:GITOPS_REPO_URL = 'https://github.com/<自分のユーザー>/<リポジトリ>.git'\n$env:GITOPS_REVISION = '<ブランチ>'\npowershell -NoProfile -File phases/08-devops-observability/scripts/up.ps1",
+              "expected": "",
+              "linuxCommand": "GITOPS_REPO_URL='https://github.com/<自分のユーザー>/<リポジトリ>.git' GITOPS_REVISION='<ブランチ>' bash phases/08-devops-observability/scripts/up.sh"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-7",
+          "kind": "practice",
+          "title": "実習: 6. 同期、drift、revert を観察する",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase8` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。\n\n\nGit に push 済みのリビジョンを参照できるようになってからの手順です。Application は既定で手動同期です（`syncPolicy` が無い）。\n\n画面の「Refresh」と「Sync」を使うか、次のコマンドを使います。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n argocd annotate application workboard argocd.argoproj.io/refresh=hard --overwrite\nkubectl --context kind-workboard-phase8 -n argocd patch application workboard --type merge -p '{\\\"operation\\\":{\\\"sync\\\":{}}}'\nkubectl --context kind-workboard-phase8 -n argocd get application workboard",
+              "expected": "期待結果は `SYNC STATUS` が `Synced`、`HEALTH STATUS` が `Healthy` です。最初の同期の前は、`kubectl apply` で作った既存のリソースも `OutOfSync` と表示されることがあります。何が違うのか、画面の Diff で確認します。移行 Job が同期のたびに作り直されることも確認します。",
+              "linuxCommand": "kubectl --context kind-workboard-phase8 -n argocd annotate application workboard argocd.argoproj.io/refresh=hard --overwrite\nkubectl --context kind-workboard-phase8 -n argocd patch application workboard --type merge -p '{\"operation\":{\"sync\":{}}}'\nkubectl --context kind-workboard-phase8 -n argocd get application workboard"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n argocd get application workboard -o jsonpath='{.status.sync.revision}{\"\\n\"}'\nkubectl --context kind-workboard-phase8 -n workboard get job,pods",
+              "expected": ""
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-8",
+          "kind": "practice",
+          "title": "実習: 7. CI をローカルで再現する",
+          "body": "すべてリポジトリ直下で実行します。この Lab の Kubernetes 操作は `--context kind-workboard-phase8` を指定します。他の Lab のクラスターを操作しないよう、毎回 context を確認してください。\n\n\n`.github/workflows/ci.yaml` の各ジョブと同じ内容を、手元で確認できます。GitHub 上の実行結果は、push した後に Actions の画面で確認します。\n\n| ジョブ | ローカルでの確認（リポジトリ直下） |\n| --- | --- |\n| `api` | `docker build --target test` したイメージを、一時的な PostgreSQL（`workboard_test`）につないで `alembic upgrade head` と `pytest`。終わったら一時コンテナとネットワークを削除する |\n| `web` | `app/web` で `npm ci` と `npm run build` |\n| `portal` | `python -m unittest discover -s learning-portal/tests`、`learning-portal` で `npm ci` と `npm run build` |\n| `images` | `docker build --target runtime app/api`、`docker build app/web` |\n| `manifests` | `kubectl kustomize` を、overlay ごとに実行する（Git 管理外の `secrets/*.env` は、`*.env.example` のコピーで足りる） |\n| `terraform` | `terraform fmt -check -recursive phases`、`phases/*/terraform` ごとに `init -backend=false` と `validate` |\n| `scripts` | `bash -n`、PowerShell の構文解析 |",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "python -m unittest discover -s learning-portal/tests\nkubectl kustomize phases/08-devops-observability/kustomize/overlays/kind | Out-Null; $LASTEXITCODE\nterraform -chdir=phases/08-devops-observability/terraform init -backend=false\nterraform -chdir=phases/08-devops-observability/terraform validate",
+              "expected": "`terraform init` は `.terraform/` を作ります（Git の対象外）。ジョブ内で `uses:` のアクションがコミット SHA で固定されている理由と、`permissions` が `contents: read` だけである理由を確認します。",
+              "linuxCommand": "python3 -m unittest discover -s learning-portal/tests\nkubectl kustomize phases/08-devops-observability/kustomize/overlays/kind > /dev/null; echo $?\nterraform -chdir=phases/08-devops-observability/terraform init -backend=false\nterraform -chdir=phases/08-devops-observability/terraform validate"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-9",
+          "kind": "practice",
+          "title": "実習: A. 手動の変更（drift）を検出し、直す",
+          "body": "ダミーデータを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase8` だけです。各実験の前に、3 の `watch-http` と 4 の PromQL（Graph）を流し、実験を始めた時刻、メトリクスが変化した時刻、元に戻った時刻を記録します。\n\n\n6 の同期が済んで `Synced` の状態から始めます（push できない場合は、実験 A・B を省略し、その理由を記録します）。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=5\nkubectl --context kind-workboard-phase8 -n argocd get application workboard\nkubectl --context kind-workboard-phase8 -n workboard get deployment workboard-web",
+              "expected": "Argo CD が `OutOfSync` と表示するまでの時間、Diff に出る項目、Web の Pod 数を記録します。次に、手動同期で Git の値に戻し、さらに自動修復を一時的に有効にして、同じ手動変更が戻るまでの時間を記録します。"
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type merge -p '{\\\"spec\\\":{\\\"syncPolicy\\\":{\\\"automated\\\":{\\\"selfHeal\\\":true}}}}'\nkubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=4\nkubectl --context kind-workboard-phase8 -n workboard get deployment workboard-web\nkubectl --context kind-workboard-phase8 -n argocd patch application workboard --type json -p '[{\\\"op\\\":\\\"remove\\\",\\\"path\\\":\\\"/spec/syncPolicy\\\"}]'",
+              "expected": "最後の `patch` で、自動修復を無効に戻します。",
+              "linuxCommand": "kubectl --context kind-workboard-phase8 -n argocd patch application workboard --type merge -p '{\"spec\":{\"syncPolicy\":{\"automated\":{\"selfHeal\":true}}}}'\nkubectl --context kind-workboard-phase8 -n workboard scale deployment/workboard-web --replicas=4\nkubectl --context kind-workboard-phase8 -n workboard get deployment workboard-web\nkubectl --context kind-workboard-phase8 -n argocd patch application workboard --type json -p '[{\"op\":\"remove\",\"path\":\"/spec/syncPolicy\"}]'"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-10",
+          "kind": "practice",
+          "title": "実習: B. 不正なコミットを同期し、revert で戻す",
+          "body": "ダミーデータを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase8` だけです。各実験の前に、3 の `watch-http` と 4 の PromQL（Graph）を流し、実験を始めた時刻、メトリクスが変化した時刻、元に戻った時刻を記録します。\n\n\n`kustomize/overlays/kind/kustomization.yaml` の `workboard-web` の `newTag` を、存在しないタグに書き換えてコミットし、push します。Argo CD で更新を取り込み、同期します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n workboard get pods -l app=workboard-web\nkubectl --context kind-workboard-phase8 -n workboard get deployment workboard-web\nkubectl --context kind-workboard-phase8 -n argocd get application workboard",
+              "expected": "Argo CD の同期状態（`SYNC STATUS`）と健全性（`HEALTH STATUS`）がそれぞれどう変わるか、旧 Pod が残るか、`watch-http` の応答が変わるかを記録します。次に、そのコミットを `git revert` で打ち消して push し、同期して、状態が戻るまでを記録します。`kubectl rollout undo` と何が違うか（何が元の状態を決めるか）も考えます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-11",
+          "kind": "practice",
+          "title": "実習: C. DB のロックで遅延を作り、p95 の変化を観察する",
+          "body": "ダミーデータを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase8` だけです。各実験の前に、3 の `watch-http` と 4 の PromQL（Graph）を流し、実験を始めた時刻、メトリクスが変化した時刻、元に戻った時刻を記録します。\n\n\nテーブルに排他ロックを 20 秒間保持するセッションを、別のターミナルで実行します。DB は動き続け、Readiness は成功したままです。ロック中も `watch-http` を流します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n workboard exec workboard-postgres-0 -- sh -c \"psql -U workboard -d workboard -c 'BEGIN; LOCK TABLE tasks IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(20); COMMIT;'\"",
+              "expected": "`watch-http` の応答時間とステータス、Prometheus の p95 とリクエスト率、`/api/v1/tasks` の `route` ごとの値を記録します。Web（Nginx）が返したエラーが API のメトリクスに現れるか、現れないかも確認します。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-12",
+          "kind": "practice",
+          "title": "実習: D. DB を止めてエラー率を上げる",
+          "body": "ダミーデータを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase8` だけです。各実験の前に、3 の `watch-http` と 4 の PromQL（Graph）を流し、実験を始めた時刻、メトリクスが変化した時刻、元に戻った時刻を記録します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase8 -n workboard scale statefulset/workboard-postgres --replicas=0\nkubectl --context kind-workboard-phase8 -n workboard get pods -l app=workboard-api\nkubectl --context kind-workboard-phase8 -n workboard scale statefulset/workboard-postgres --replicas=1\nkubectl --context kind-workboard-phase8 -n workboard rollout status statefulset/workboard-postgres --timeout=120s",
+              "expected": "`watch-http` のステータスの順序、Prometheus のエラー率、`status` ごとの件数を記録します。メトリクスに現れる 5xx と、利用者が見た 5xx が一致するか確認します。Pod 数や Readiness の変化は、`kubectl` の出力とメトリクスのどちらで分かるかも比べます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-13",
+          "kind": "practice",
+          "title": "実習: 失敗時に確認すること",
+          "body": "- 接続先が違う: `. .\\phases\\08-devops-observability\\scripts\\env.ps1`（Bash は `source phases/08-devops-observability/scripts/env.sh`）を読み込んだか。context が `kind-workboard-phase8` か。\n- `up` が Argo CD の取得で失敗する: GitHub（`raw.githubusercontent.com`）に接続できるか。プロキシ等の設定を確認する。\n- Argo CD の CRD の適用が `annotation too long` で失敗する: `--server-side` で適用しているか。\n- Application が `ComparisonError`: メッセージを読む。`Repository not found` や `authentication required` は、`repoURL` が存在しない、または非公開。`revision ... not found` は `targetRevision` が push されていない。`app path does not exist` は `path` がそのリビジョンに無い。\n- Application が `OutOfSync` のまま戻らない: 画面の Diff を読む。手動変更か、Git 側の変更か。移行 Job や Secret は同期の対象外（Job は hook、Secret は Git に無い）であることを思い出す。\n- Prometheus の対象が 0 件、または `DOWN`: `/targets` のエラーを読む。`pods is forbidden` は RBAC（`prometheus-discovery` Role と RoleBinding）。`connection refused` は API Pod の起動前、またはポート違い。\n- PromQL が空: `watch-http` で実際にリクエストを送っているか。`[1m]` や `[5m]` の窓より長い間、系列が存在しているか。スクレイプ間隔（15 秒）より短い窓では値が出ない。\n- Prometheus の過去のデータが消えた: データは `emptyDir` で、Pod の作り直しで消える。\n- API が Ready にならない: `logs deployment/workboard-api` の認証エラー。`db.env` と Secret `workboard-db` が、DB を初期化した値と一致しているか。\n- `ErrImageNeverPull`: `kind load docker-image ... --name workboard-phase8` が成功したか（`up` を再実行する）。実験 B では意図した動作。\n- 8084 / 8085 / 8087 が使えない: 他のプロセスが使用中でないか確認し、解放できる場合だけ解放する。\n- CD が最初のステップで失敗する: 表示された変数名を repository variables に設定する。\n- CD の `Configure AWS credentials` が `Not authorized to perform sts:AssumeRoleWithWebIdentity`: 信頼ポリシーの `sub`（リポジトリ名と environment 名）と、ジョブの environment が一致しているか。environment の承認が済んでいるか。\n- CD の `kubectl` が `Forbidden`: access entry とポリシーの関連付けが作られているか。許可は `workboard` namespace だけで、他の namespace やクラスター単位のリソースには届かない。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-14",
+          "kind": "practice",
+          "title": "実習: Linux / macOS / WSL での前提",
+          "body": "スクリプトは PowerShell 版と同じ処理の Bash 版（`phases/08-devops-observability/scripts/` の `env.sh`・`up.sh`・`watch-http.sh`、導入は Phase 2 と共通の `tools/kind-install.sh`）があり、上の手順の「Linux / macOS / WSL (Bash)」に従います。Bash 4 以降、Docker（WSL は Docker Desktop の WSL 統合）、kubectl 1.34〜1.36、`curl` が必要です。その他の条件は Phase 2 の「Linux / macOS / WSL での前提」と同じです。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-15",
+          "kind": "practice",
+          "title": "実習: 後片付け・再構築",
+          "body": "`port-forward` を実行しているターミナルで `Ctrl+C` を押すと入口だけが閉じます。クラスターとアプリは動き続けます。実験 A で `selfHeal` を有効にしたままなら、無効に戻します。\n\n`workboard-phase8` を削除すると、PVC/PV に保存した DB のデータ、Prometheus のデータ、Argo CD の状態も失われます。クラスター名と消えるデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。他のクラスターは対象外です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kind delete cluster --name workboard-phase8",
+              "expected": "削除後、専用 kubeconfig `.kube/workboard-phase8.yaml` が残っていれば対象を確認してそのファイルだけ削除します。`db.env` は残して再利用できます。クラスター（PVC）を残したまま `db.env` を消さないでください。 構築スクリプトが別のパスワードを生成し、初期化済みの DB と一致しなくなります。\n\nAWS 側に作った資源（CD 用ロール、OIDC プロバイダー、ECR のイメージ）の削除は、「AWS のコストを確認し、不要な環境を削除する」の順序に従い、対象と影響を確認してから学習者が行います。"
+            }
+          ]
         }
       ],
       "diagram": {
         "type": "pipeline",
         "title": "変更から次の改善へ",
-        "caption": "Phase 8 の予習。これは工程と情報の流れで、箱がすべて Kubernetes リソースやコンテナという意味ではありません。",
+        "caption": "Phase 8 の工程です。これは工程と情報の流れで、箱がすべて Kubernetes リソースやコンテナという意味ではありません。",
         "nodes": [
           {
             "id": "git",
@@ -3549,7 +5392,7 @@
           {
             "id": "overview",
             "title": "全体像",
-            "description": "Phase 8 の予習。これは工程と情報の流れで、箱がすべて Kubernetes リソースやコンテナという意味ではありません。",
+            "description": "Phase 8 の工程です。これは工程と情報の流れで、箱がすべて Kubernetes リソースやコンテナという意味ではありません。",
             "nodeIds": [
               "git",
               "ci",
@@ -3568,52 +5411,112 @@
       "questions": [
         {
           "id": "q1",
-          "prompt": "GitOps と CI からの直接 `kubectl apply` の違いは？",
+          "prompt": "GitOps（Argo CD）と、CI からの直接 `kubectl apply` は、変更の経路・クラスターへの認証情報の置き場所・手元で変更されたときの扱いがどう違うか？ 管理するクラスターやアプリが増えたら、どちらが有利か？",
           "rubric": [
-            "Gitを正本として継続的に差分を調整する方式とCIによる直接実行を区別する",
-            "権限・ドリフト・復旧方法を比較する"
+            "GitOps は Git を正本に継続的に差分を調整する pull 型、CI からの apply は push 型と区別する",
+            "認証情報の置き場所・drift の扱い・対象が増えたときの有利不利を比較する"
           ]
         },
         {
           "id": "q2",
-          "prompt": "管理対象が増えたらどちらが有利か？",
+          "prompt": "Helm と Kustomize は、それぞれどんな変更・配布に向くか？ 両方を同じアプリに使うと何が複雑になるか？ WorkBoard を Helm chart にするかどうかは、何を基準に決めるか？",
           "rubric": [
-            "対象数・チーム・運用能力という判断条件を挙げる",
-            "管理要素の追加コストも比較し一律に断定しない"
+            "Helm は配布・パッケージ化・release 管理、Kustomize は自分の YAML の環境差分に向くと説明する",
+            "併用すると生成が二段になり出所と差分を追いにくくなることと、判断の基準を述べる"
           ]
         },
         {
           "id": "q3",
-          "prompt": "Helm と Kustomize は、それぞれどんな変更・配布に向くか？",
+          "prompt": "Git に置けない値（DB のパスワードなど）がある場合、GitOps ではどう扱うか？ 選択肢ごとに、守れるものと残る課題は何か？",
           "rubric": [
-            "Helmはパッケージ化・配布・release管理、Kustomizeは自分のYAMLの環境差分に向くと説明する",
-            "利用者・配布の有無・レビューのしやすさを判断条件に含める"
+            "Git に置けない値の扱い方（事前作成、Sealed Secrets、External Secrets など）を挙げる",
+            "選んだ方式で残る課題（手作業、ローテーション、鍵の管理など）を述べる"
           ]
         },
         {
           "id": "q4",
-          "prompt": "両方を同じアプリに使うと何が複雑になるか？",
+          "prompt": "SLI/SLO を決めるとき、何を分子・分母にするか？ どのリクエストを除外するか？ 期間と目標値はどう決めるか？ 測定する前に、達成していると言えるか？",
           "rubric": [
-            "生成手順が二段になり、最終的なマニフェストの出所と差分を追いにくくなると説明する",
-            "併用する場合は役割の分担と生成結果の確認方法を決めると説明する"
+            "SLI の分子・分母・除外条件（ヘルスチェックなど）と期間を明示する",
+            "測定前に達成と断言せず、目標値の根拠を述べる"
+          ]
+        },
+        {
+          "id": "q5",
+          "prompt": "CD の手動承認は、どの時点に置くか？ 承認者は何を見て判断するか？ GitHub OIDC で長期キーを置かないとき、AWS のロールを引き受けられる条件は何で絞るか？",
+          "rubric": [
+            "承認を本番反映の直前に置き、承認者が確認する内容（差分、テスト結果、対象）を述べる",
+            "OIDC の信頼条件をリポジトリ・ブランチ・environment で絞ると説明する"
+          ]
+        },
+        {
+          "id": "q6",
+          "prompt": "API が遅くなった、またはエラーが増えたとき、Prometheus のメトリクスだけで原因を特定できるか？ 特定できないとき、追加で何を見るか？",
+          "rubric": [
+            "リクエスト率・エラー率・p95 など、どの指標で何が分かるかを説明する",
+            "メトリクスで分からないとき（Nginx の 504/502 など）に使うログ・イベントを挙げる"
+          ]
+        },
+        {
+          "id": "q7",
+          "prompt": "AWS の費用が想定を超えないようにするために、確認する仕組みと、不要な環境を確実に消す仕組みをどう組み合わせるか？ それでも防げないことは何か？",
+          "rubric": [
+            "予算通知・Cost Explorer による確認と、削除の手順・タグによる点検を組み合わせる",
+            "予算通知は課金停止を保証しないなど、防げないことを述べる"
           ]
         }
       ],
       "memoFields": [
         {
           "id": "m1",
-          "label": "理解した概念"
+          "label": "CI の各ジョブがローカルで何に当たるか、再現できなかった範囲"
         },
         {
           "id": "m2",
-          "label": "想定する構成と採用理由"
+          "label": "CD の手動承認・OIDC の信頼条件・ロールの権限について読み取れたこと"
         },
         {
           "id": "m3",
-          "label": "必要な実験と期待結果"
+          "label": "Prometheus の対象の一覧と、PromQL の結果（リクエスト率・エラー率・p95）"
         },
         {
           "id": "m4",
+          "label": "4xx と 5xx の扱い、ヒストグラムの p95 の粒度についての気づき"
+        },
+        {
+          "id": "m5",
+          "label": "Argo CD の Application の状態（push 前の `ComparisonError` のメッセージ、同期後の状態）"
+        },
+        {
+          "id": "m6",
+          "label": "故障実験 A（drift）の検出までの時間と、自動修復までの時間（実施した場合）"
+        },
+        {
+          "id": "m7",
+          "label": "故障実験 B（不正なコミットと revert）の SYNC STATUS・HEALTH STATUS・Pod の状態・復旧までの時間（実施した場合）"
+        },
+        {
+          "id": "m8",
+          "label": "故障実験 C（DB ロックによる遅延）の応答時間・p95・Web が返したエラーのメトリクスへの現れ方"
+        },
+        {
+          "id": "m9",
+          "label": "故障実験 D（DB 停止）のステータスの順序・エラー率・利用者が見たエラーとメトリクスの差"
+        },
+        {
+          "id": "m10",
+          "label": "設計課題 1〜7 への回答と、ADR-0015・ADR-0016 との違い"
+        },
+        {
+          "id": "m11",
+          "label": "AWS コスト確認と削除の流れ（実行した場合は結果、していない場合は計画）"
+        },
+        {
+          "id": "m12",
+          "label": "後片付け・残したクラスター"
+        },
+        {
+          "id": "m13",
           "label": "疑問・未解決事項"
         }
       ],
@@ -3621,6 +5524,10 @@
         {
           "label": "一次設計書",
           "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 08 原本",
+          "path": "phases/08-devops-observability/README.md"
         }
       ]
     },
@@ -3628,48 +5535,79 @@
       "id": 9,
       "slug": "comparison",
       "title": "ECSとEKSを選び分ける",
-      "subtitle": "予習 / 要件から採用判断へ",
+      "subtitle": "同じ要件で採用判断を書く",
       "level": "review",
-      "implemented": false,
-      "estimatedMinutes": 40,
-      "summary": "EKS採用を正解にせず、同じ要件と根拠で選択肢を比べます。",
+      "implemented": true,
+      "estimatedMinutes": 90,
+      "summary": "EKS 採用を正解にせず、同じ要件・同じ条件・根拠で選択肢を比べます。",
       "goals": [
-        "ECSとEKSを同じ要件で比較できる",
-        "採用理由・反対案・不確実性を根拠と共に残せる"
+        "同じ要件に対して ECS 構成案と EKS 構成案を描き、比較軸ごとに違いを説明できる。",
+        "「EKS を使うこと」を前提にせず、要件と条件から採用・不採用を判断し、反対案と判断が変わる条件を示せる。",
+        "定量比較（費用など）の条件を揃え、確認できた事実と推測、不確実性を区別して記録できる。",
+        "Phase 1〜8 で自分が観察したことを、設計判断の根拠として引用できる。"
       ],
       "concepts": [
         {
-          "term": "比較条件",
-          "description": "規模・チーム・可用性・移植性などをそろえて比較します。",
-          "analogy": "同じ荷物と距離で運送方法を選ぶ"
+          "term": "同一条件での比較",
+          "description": "要件・region・稼働時間・構成・調査日をそろえて ECS 案と EKS 案を評価します。条件の違う数字は比べません。",
+          "analogy": "同じ距離・同じ荷物で電車とバスを比べる"
         },
         {
-          "term": "運用負荷",
-          "description": "導入後に更新・障害対応・監視を続けるための負担です。",
-          "analogy": "購入費とは別に必要な維持費と手間"
+          "term": "責任共有と運用人件費",
+          "description": "マネージドの範囲が違えば、自分たちが担うパッチ・容量・アドオンの工数が変わります。利用料に加え、人の時間と学習負担もコストです。",
+          "analogy": "家賃が安くても管理を全部自分でやる物件"
         },
         {
-          "term": "不確実性",
-          "description": "未測定・未確定の前提を明示し、追加調査へつなげます。",
-          "analogy": "見積もりの根拠と未確定欄"
+          "term": "判断が変わる条件",
+          "description": "結論を一つの正解にせず、どの仮定が変わると逆転するかを残します。反対案を最も有利な条件で擁護して確かめます。",
+          "analogy": "雨なら中止と条件を付けた予定"
         }
       ],
       "sections": [
         {
-          "id": "preview",
-          "title": "この章は予習です",
-          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
-          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
-        },
-        {
           "id": "scenario",
           "title": "同じサービス要件で比較する",
-          "body": "設計書の仮定は、月間数十万リクエスト規模の社内タスク管理を少人数で運用し、将来複数サービスが加わる可能性がある状況です。これはユーザーの実要件ではなく、比較のための課題シナリオです。\n\n初期構築、運用責任、スケール、可用性、セキュリティ、コスト、開発体験、長期戦略を比べます。"
+          "body": "ecs-vs-eks.md の課題シナリオは、月間数十万リクエスト規模の社内タスク管理を少人数で運用し、将来複数サービスが加わる可能性がある状況です。これはユーザーの実要件ではなく、比較のための仮定です。\n\narchitecture.md で同じ WorkBoard を ECS と EKS に載せた構成を比べ、Phase 1〜8 で観察したことを根拠として使います。このラボは AWS もクラスターも操作しません。"
         },
         {
           "id": "decision",
           "title": "採用案を反対案と一緒に書く",
-          "body": "採用案だけでなく、もう一方を選ばない理由と、その判断が変わる条件も残します。既存技術や組織の習熟度も要件の一部です。\n\n料金の定量比較はregion・時間・構成・調査日をそろえて公式情報を確認する必要があります。この予習教材では現行料金を断定していません。"
+          "body": "採用案だけでなく、もう一方を選ばない理由と、その判断が変わる条件も残します。既存技術や組織の習熟度も要件の一部です。\n\n料金は AWS Pricing Calculator と公式料金ページで、region・時間・構成・調査日をそろえて自分で確認します。教材には料金の値を載せていません。"
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "Phase 1〜8 の学習（またはその範囲の理解）があること。Phase 6〜8 を実際には実行していない場合は、そのことを「実行していない」と明示して記録し、公式資料で補います（実行していない内容を観察したことにしない）。\n\nこの Lab はコードを書かず、クラウドの操作もしません（AWS API の呼び出し、リソース作成、`terraform apply` は行いません）。費用は AWS 公式の料金ページと AWS Pricing Calculator を自分で見て見積もります。AWS 費用は発生しません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 1. 構成要素と責任分界を公式資料で確認する",
+          "body": "このラボは実行して確認するのではなく、資料を読み、条件を揃えて見積もり、根拠をたどれる形で記録することが検証です。確認はすべて公式資料の閲覧と、Pricing Calculator 上での試算です。調査日と参照した資料の URL を記録してください。\n\n\nADR-0017（提案）（decisions/0017-ecs-vs-eks-evaluation-method.md） の Evidence にある ECS と EKS の公式ドキュメントを読み、チェック観点を決めて確認します。\n\n- 起動タイプ（Fargate / EC2）ごとに、OS・パッチ・容量管理の責任が誰にあるか。\n- タスクロール / Pod Identity など、コンテナにどう IAM 権限を渡すか。\n- ロードバランサーと ECS サービス / EKS の Service・Ingress の対応。\n- ログの出力先と、収集のために自分で用意するもの。\n\n期待結果は、比較表の各行に「どの資料のどの記述か」が付いていることです。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-3",
+          "kind": "practice",
+          "title": "実習: 2. 費用を同じ条件で見積もる",
+          "body": "このラボは実行して確認するのではなく、資料を読み、条件を揃えて見積もり、根拠をたどれる形で記録することが検証です。確認はすべて公式資料の閲覧と、Pricing Calculator 上での試算です。調査日と参照した資料の URL を記録してください。\n\n\necs-vs-eks.md（ecs-vs-eks.md） の「定量比較で揃える条件」を先に決め、ECS・EKS 両案を同じ条件で AWS Pricing Calculator（https://calculator.aws/） に入力します。料金は変動するため、この教材の資料に値は載せていません。公式の料金ページ（ECS / Fargate / EKS）も併読し、計算ツールに含まれない費用（運用人件費、移行費用、データ転送など）が何かを書き出します。\n\n期待結果は、条件（region、時間、台数、構成、調査日）が記録され、他の人が同じ条件で再計算できることです。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-4",
+          "kind": "practice",
+          "title": "実習: 3. Phase 1〜8 の観察を根拠に結びつける",
+          "body": "このラボは実行して確認するのではなく、資料を読み、条件を揃えて見積もり、根拠をたどれる形で記録することが検証です。確認はすべて公式資料の閲覧と、Pricing Calculator 上での試算です。調査日と参照した資料の URL を記録してください。\n\n\n比較表の「Phase 1〜8 で観察したこと」の列に、自分の学習メモのどの記録が根拠になるかを書きます。観察していない軸は空欄にせず「未観察」と書き、追加調査へ回します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-5",
+          "kind": "practice",
+          "title": "実習: 4. 反対意見を試す",
+          "body": "このラボは実行して確認するのではなく、資料を読み、条件を揃えて見積もり、根拠をたどれる形で記録することが検証です。確認はすべて公式資料の閲覧と、Pricing Calculator 上での試算です。調査日と参照した資料の URL を記録してください。\n\n\n自分の結論と反対の案を、最も有利な条件で擁護する文章を書いてみます。どの条件が変われば結論が逆転するかを「判断が変わる条件」に残します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
         }
       ],
       "diagram": {
@@ -3772,99 +5710,123 @@
       "questions": [
         {
           "id": "q1",
-          "prompt": "初期構築: どちらが要件実現までの構成要素が少ないか",
+          "prompt": "初期構築: どちらが要件実現までの構成要素が少ないか？",
           "rubric": [
-            "ECSとEKSを同じ条件で比較する",
-            "初期構築について構成・運用の違いを根拠と共に説明する",
-            "前提と不確実性を明示しEKSを無条件の正解としない"
+            "ECS と EKS で必要な構成要素を実際に挙げて比べる",
+            "要件の実現に必要な最小構成と、学習済みの経験を区別する"
           ]
         },
         {
           "id": "q2",
-          "prompt": "運用責任: ノード、パッチ、ネットワーク、アドオンの管理責務はどちらにあるか",
+          "prompt": "運用責任: ノード、パッチ、ネットワーク、アドオンの管理責務はどちらにあるか？",
           "rubric": [
-            "ECSとEKSを同じ条件で比較する",
-            "運用責任について構成・運用の違いを根拠と共に説明する",
-            "前提と不確実性を明示しEKSを無条件の正解としない"
+            "起動タイプ・ノード管理方式ごとに OS・パッチ・容量・アドオンの担当を区別する",
+            "EKS でもノード運用の責任が残り得る点を方式別に説明する"
           ]
         },
         {
           "id": "q3",
-          "prompt": "スケール: Pod/Task と Node/Capacity の独立性、負荷への追従はどう違うか",
+          "prompt": "スケール: Pod/Task と Node/Capacity の独立性、負荷への追従はどう違うか？",
           "rubric": [
-            "ECSとEKSを同じ条件で比較する",
-            "スケールについて構成・運用の違いを根拠と共に説明する",
-            "前提と不確実性を明示しEKSを無条件の正解としない"
+            "Task/Pod の増減と Node/容量の増減の関係を両案で説明する",
+            "追従が遅れる条件に触れる"
           ]
         },
         {
           "id": "q4",
-          "prompt": "可用性: ノード / AZ / DB 障害にどの設計で対応するか",
+          "prompt": "可用性: ノード / AZ / DB 障害にどの設計で対応するか？",
           "rubric": [
-            "ECSとEKSを同じ条件で比較する",
-            "可用性について構成・運用の違いを根拠と共に説明する",
-            "前提と不確実性を明示しEKSを無条件の正解としない"
+            "ノード・AZ・DB の障害を分けて対応を書く",
+            "RDS の障害の影響は両案で共通であることを踏まえる"
           ]
         },
         {
           "id": "q5",
-          "prompt": "セキュリティ: IAM、ネットワーク、コンテナ権限、監査で何が必要か",
+          "prompt": "セキュリティ: IAM、ネットワーク、コンテナ権限、監査で何が必要か？",
           "rubric": [
-            "ECSとEKSを同じ条件で比較する",
-            "セキュリティについて構成・運用の違いを根拠と共に説明する",
-            "前提と不確実性を明示しEKSを無条件の正解としない"
+            "IAM（タスクロール / Pod Identity）・ネットワーク・コンテナ権限・監査を比べる",
+            "実行基盤の権限とアプリの権限を区別する"
           ]
         },
         {
           "id": "q6",
-          "prompt": "コスト: 常時費用、変動費、運用人件費、移行費用の差は何か",
+          "prompt": "コスト: 常時費用、変動費、運用人件費、移行費用の差は何か？",
           "rubric": [
-            "ECSとEKSを同じ条件で比較する",
-            "コストについて構成・運用の違いを根拠と共に説明する",
-            "前提と不確実性を明示しEKSを無条件の正解としない"
+            "region・時間・構成・調査日をそろえた見積もり条件を記録する",
+            "運用人件費と移行費用を仮定を明示して含める"
           ]
         },
         {
           "id": "q7",
-          "prompt": "開発体験: GitOps、共通基盤、エコシステム、組織の学習負荷はどう違うか",
+          "prompt": "開発体験: GitOps、共通基盤、エコシステム、組織の学習負荷はどう違うか？",
           "rubric": [
-            "ECSとEKSを同じ条件で比較する",
-            "開発体験について構成・運用の違いを根拠と共に説明する",
-            "前提と不確実性を明示しEKSを無条件の正解としない"
+            "GitOps・共通基盤・エコシステムとチームの学習負荷を両案で比べる",
+            "自分の Phase 8 の観察を根拠にし、未観察ならそう書く"
           ]
         },
         {
           "id": "q8",
-          "prompt": "長期戦略: 既存技術、移植性、マルチクラスタ要件が判断に影響するか",
+          "prompt": "長期戦略: 既存技術、移植性、マルチクラスタ要件が判断に影響するか？",
           "rubric": [
-            "ECSとEKSを同じ条件で比較する",
-            "長期戦略について構成・運用の違いを根拠と共に説明する",
-            "前提と不確実性を明示しEKSを無条件の正解としない"
+            "将来のサービス追加・移植性・既存技術が結論に与える影響を条件付きで書く",
+            "どちらも無条件の正解とせず、判断が変わる条件を示す"
           ]
         }
       ],
       "memoFields": [
         {
           "id": "m1",
-          "label": "想定要件"
+          "label": "実施日・調査日"
         },
         {
           "id": "m2",
-          "label": "比較結果と根拠"
+          "label": "置いた仮定と要件"
         },
         {
           "id": "m3",
-          "label": "採用案・反対案"
+          "label": "ECS 案の構成（起動タイプ、主要な構成要素）"
         },
         {
           "id": "m4",
-          "label": "不確実性と追加調査"
+          "label": "EKS 案の構成（ノード管理方式、主要な構成要素）"
+        },
+        {
+          "id": "m5",
+          "label": "費用見積もりの条件（region・時間・台数・構成）と使った資料"
+        },
+        {
+          "id": "m6",
+          "label": "比較軸ごとの比較結果と根拠"
+        },
+        {
+          "id": "m7",
+          "label": "Phase 1〜8 の観察のうち根拠にしたもの"
+        },
+        {
+          "id": "m8",
+          "label": "採用判断と理由"
+        },
+        {
+          "id": "m9",
+          "label": "反対案と判断が変わる条件"
+        },
+        {
+          "id": "m10",
+          "label": "不確実性・未確認の点・追加調査"
+        },
+        {
+          "id": "m11",
+          "label": "疑問・未解決事項"
         }
       ],
       "sources": [
         {
           "label": "一次設計書",
           "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 09 原本",
+          "path": "phases/09-architecture-review/README.md"
         }
       ]
     }
