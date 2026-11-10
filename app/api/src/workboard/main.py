@@ -7,10 +7,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from workboard.database import get_session
+from workboard.metrics import METRICS_PATH, metrics_response, record_metrics
 from workboard.models import Task, TaskStatus
 from workboard.schemas import TaskCreate, TaskRead, TaskUpdate
 
 app = FastAPI(title="WorkBoard API", version="0.1.0")
+app.middleware("http")(record_metrics)
 DatabaseSession = Annotated[Session, Depends(get_session)]
 
 
@@ -24,6 +26,11 @@ def find_task(task_id: UUID, session: Session) -> Task:
 @app.get("/health/live")
 def live():
     return {"status": "alive"}
+
+
+@app.get(METRICS_PATH, include_in_schema=False)
+def metrics():
+    return metrics_response()
 
 
 @app.get("/health/ready")
