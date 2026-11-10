@@ -118,9 +118,9 @@ export function useLearning(data: Bootstrap, notify: Notify) {
     } catch { /* 保存失敗の案内は save が表示する。 */ }
   }, [edit, flush, notify]);
 
-  const grade = useCallback(async (phase: Phase) => {
+  const grade = useCallback(async (phase: Phase, provider: string) => {
     const id = phase.id;
-    if (!data.ai.available || gradingRef.current.has(id)) return;
+    if (gradingRef.current.has(id)) return;
     if (!Object.values(recordsRef.current[id].answers).some(answer => answer.trim())) {
       notify("設計の問いにひとつ以上回答してから、AI と振り返ってみましょう。", true);
       return;
@@ -131,7 +131,7 @@ export function useLearning(data: Bootstrap, notify: Notify) {
     try {
       await flush(id);
       const snapshot = answerSignature(recordsRef.current[id]);
-      const result = await api<{ feedback: Feedback; progress?: PhaseProgress }>(`/grade/${encodeURIComponent(id)}`, JSON.parse(snapshot), 270000);
+      const result = await api<{ feedback: Feedback; progress?: PhaseProgress }>(`/grade/${encodeURIComponent(id)}`, { ...JSON.parse(snapshot), provider }, 270000);
       feedbackInputsRef.current.set(id, snapshot);
       update(id, value => ({ ...value, feedback: result.feedback }));
       notify("振り返りが届きました。良かった点と、次の一歩を見てみましょう。");
@@ -142,7 +142,7 @@ export function useLearning(data: Bootstrap, notify: Notify) {
       gradingRef.current.delete(id);
       setGradingIds([...gradingRef.current]);
     }
-  }, [data.ai.available, flush, notify, update]);
+  }, [flush, notify, update]);
 
   const exportNotes = useCallback(async (id: string) => {
     try {

@@ -21,20 +21,49 @@ Lab 00 完了、Git、Docker と Compose、Linux コンテナエンジンが必�
 
 ## 実装タスク
 
-1. [構成図](../../docs/architecture/01-compose.md) と [ADR](../../docs/adr/0002-compose-startup-and-persistence.md) を読む。
-2. [全体 README の起動手順](../../README.md#workboard-を起動する) に従い `.env` を作成・編集する。
+1. [構成図](architecture.md) と [ADR](decisions/0002-compose-startup-and-persistence.md) を読む。
+2. 下の「Phase 1: Compose 上で WorkBoard を起動する」に従い `.env` を作成・編集する。
 3. 以下のコマンドを **リポジトリ直下** で実行する。
-4. 画面・API・ログを観察し、**このファイル末尾の「学習メモ」** を埋める。
+4. 画面・API・ログを観察し、**学習ポータルの学習メモ**（項目はこのファイルの「学習メモ」節）に記録する。
+
+## Phase 1: Compose 上で WorkBoard を起動する
+
+Docker の Linux コンテナエンジン（Windows / macOS は Docker Desktop、Linux は Docker Engine または Docker Desktop）を起動し、リポジトリ直下で操作します。Docker エンジンは `docker info` で確認できます。kind・Terraform は今回不要です。
+
+初回だけ `.env.example` を `.env` にコピーします。すでに `.env` がある場合は上書きせず、そのファイルを使ってください。
+
+**Windows (PowerShell):**
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+if [ ! -f .env ]; then cp .env.example .env; fi
+```
+
+`.env` をエディターで開き、`POSTGRES_PASSWORD` の例をローカル専用の値に変更します。このファイルは Git の対象外です。DB 初期化後に値を変更しても既存 DB のパスワードは自動で変わりません。
+
+共通の起動コマンド:
+
+```text
+docker compose -f phases/01-compose/compose.yaml up --build -d
+docker compose -f phases/01-compose/compose.yaml ps -a
+```
+
+`migrate` は正常終了（Exited 0）、`api` と `db` は healthy、`web` は Up が期待結果です。初回はイメージの取得・ビルドに時間がかかります。[WorkBoard](http://localhost:8080) を開くとタスクを作成・編集・削除できます。[API ドキュメント](http://localhost:8080/docs) も利用できます。
 
 ## 検証コマンド・期待結果
 
 ### 1. 設定と起動を確認する
 
 ```text
-docker compose -f docker/compose.yaml config --quiet
-docker compose -f docker/compose.yaml up --build -d
-docker compose -f docker/compose.yaml ps -a
-docker compose -f docker/compose.yaml logs --tail=30 migrate api
+docker compose -f phases/01-compose/compose.yaml config --quiet
+docker compose -f phases/01-compose/compose.yaml up --build -d
+docker compose -f phases/01-compose/compose.yaml ps -a
+docker compose -f phases/01-compose/compose.yaml logs --tail=30 migrate api
 ```
 
 設定確認が成功し、DB→migration→API→Web の順に準備されます。`migrate` の Exited 0 は正常終了です。API・DB が healthy、Web が Up になるまで待ちます。
@@ -55,7 +84,7 @@ docker compose -f docker/compose.yaml logs --tail=30 migrate api
 
 ### 3. API と health を確認する
 
-PowerShell:
+**Windows (PowerShell):**
 
 ```powershell
 Invoke-RestMethod http://localhost:8080/health/live
@@ -63,7 +92,7 @@ Invoke-RestMethod http://localhost:8080/health/ready
 Invoke-RestMethod http://localhost:8080/api/v1/tasks
 ```
 
-Bash:
+**Linux / macOS / WSL (Bash):**
 
 ```bash
 curl -i http://localhost:8080/health/live
@@ -76,11 +105,11 @@ curl -i http://localhost:8080/api/v1/tasks
 ### 4. 再起動・公開ポート・データ保持を観察する
 
 ```text
-docker compose -f docker/compose.yaml restart api
-docker compose -f docker/compose.yaml ps
-docker compose -f docker/compose.yaml port web 80
-docker compose -f docker/compose.yaml port api 8000
-docker compose -f docker/compose.yaml port db 5432
+docker compose -f phases/01-compose/compose.yaml restart api
+docker compose -f phases/01-compose/compose.yaml ps
+docker compose -f phases/01-compose/compose.yaml port web 80
+docker compose -f phases/01-compose/compose.yaml port api 8000
+docker compose -f phases/01-compose/compose.yaml port db 5432
 ```
 
 API が healthy に戻ったらブラウザーを再読込します。タスクは残ります。Web の公開先は `127.0.0.1:8080`、API/DB は公開ポートなし（port コマンドの「公開されていない」というエラーは期待どおり）です。
@@ -88,8 +117,8 @@ API が healthy に戻ったらブラウザーを再読込します。タスク�
 通常の `down` と再起動も試せます:
 
 ```text
-docker compose -f docker/compose.yaml down
-docker compose -f docker/compose.yaml up -d
+docker compose -f phases/01-compose/compose.yaml down
+docker compose -f phases/01-compose/compose.yaml up -d
 ```
 
 同じタスクが残ることを確認してから、画面の「削除」で検証用タスクを削除してください。
@@ -97,7 +126,7 @@ docker compose -f docker/compose.yaml up -d
 ### 5. 自動 API テストを実行する
 
 ```text
-docker compose -f docker/compose.yaml --profile test run --build --rm tests
+docker compose -f phases/01-compose/compose.yaml --profile test run --build --rm tests
 ```
 
 テストは `workboard_test` という専用 PostgreSQL の tmpfs 上で migration・CRUD・入力エラー・health を確認します。終了コード 0、全テスト成功が期待結果です。学習用 DB のデータを削除しません。
@@ -107,14 +136,23 @@ docker compose -f docker/compose.yaml --profile test run --build --rm tests
 学習用環境を利用中のほかの人がいないことを確認してから実行します。
 
 ```text
-docker compose -f docker/compose.yaml stop db
+docker compose -f phases/01-compose/compose.yaml stop db
 ```
 
-PowerShell なら `curl.exe`、Bash なら `curl` を使って次の URL のステータスを確認します。PowerShell の `curl` は別コマンドの別名になり得るため `curl.exe` を明記します。
+次の URL のステータスを確認します。PowerShell の `curl` は別コマンドの別名になり得るため `curl.exe` を明記します。
+
+**Windows (PowerShell):**
 
 ```powershell
 curl.exe -i http://localhost:8080/health/live
 curl.exe -i http://localhost:8080/health/ready
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+curl -i http://localhost:8080/health/live
+curl -i http://localhost:8080/health/ready
 ```
 
 期待結果は Liveness 200、Readiness 503。API の DB 接続は数秒で失敗し、画面でのタスク操作も失敗し得ます。API のコンテナが unhealthy になっても、Compose が自動で再起動するとは限りません。
@@ -122,16 +160,25 @@ curl.exe -i http://localhost:8080/health/ready
 次で復旧し、Readiness が 200 に戻るまで待ちます。
 
 ```text
-docker compose -f docker/compose.yaml start db
-docker compose -f docker/compose.yaml ps
+docker compose -f phases/01-compose/compose.yaml start db
+docker compose -f phases/01-compose/compose.yaml ps
 ```
 
 API を再起動しなくても接続が回復することと、既存タスクが残ることを観察します。**volume を消す実験は今回は行いません。** 実施する場合は、対象の volume と失われるデータを確認し、削除の明示承認後に別途行います。
 
+## UI の型チェックとビルド（任意）
+
+ホスト側で UI の型チェック・ビルドを行う場合は、リポジトリ直下で実行します。
+
+```text
+npm --prefix app/web ci
+npm --prefix app/web run build
+```
+
 ## 後片付け
 
 ```text
-docker compose -f docker/compose.yaml --profile test down
+docker compose -f phases/01-compose/compose.yaml --profile test down
 ```
 
 学習用 volume は残ります。`-v` は付けません。テスト DB は tmpfs のためコンテナ削除で消えます。
@@ -148,28 +195,18 @@ docker compose -f docker/compose.yaml --profile test down
 
 ## 学習メモ
 
-この表の `未記録` を、自分が実行した結果に置き換えてください。実装担当の検証記録とは別に、自分の観察を残します。
+観察結果と設計課題への回答は、この README ではなく**学習ポータルに入力します**（各自の PC の Git 管理外 `learning-portal/.data` にだけ保存され、リポジトリには残りません）。実行していない実験は「省略」と理由を書きます。記録する項目は次のとおりです。
 
-| 項目 | 観察・結果 |
-| --- | --- |
-| 実行日・OS・シェル | 2026/11/8・Windows・Powershell |
-| 起動結果・migration の状態 | Exited(0) |
-| 画面の CRUD・絞り込み | できた |
-| ブラウザー再読込・API 再起動後のデータ | 残ることを確認した |
-| down/up 後のデータ | volumeが残っている限りはのころうことを確認した |
-| 公開ポート | Webサーバのみ外部にポートが解放されており、APIとDBはコンテナ同士にしかポートが解放されていないことを確認した |
-| 自動テストの結果 | 15 passed |
-| DB 停止時の live / ready と復旧 | liveは200だがreadyは503となることを確認し、DBを復旧させるとreadyも200になることを確認した |
-| 後片付け・残った volume | 後片付けを実施した。volumeは残してあるので、再度docker compose upすれば前のデータが残っている状態で始められる |
-| 疑問・未解決事項 | なし |
-
-### 設計課題への回答
-
-1. コンテナを分ける理由: 一つのコンテナにまとめてしまうとコンテナ一つがつぶれたときにサービスがまるごとダウンしてしまうが、マイクロサービス化することで障害影響範囲を最小に抑えられる→個別に更新・再起動・管理ができるから
-2. 起動順と readiness の違い: service_completed_successfullyに設定することでDBが立ち上がる前にAPIが叩ける状態は実現しなくなるが、サービス稼働中にDBだけダウンしたりした場合においては接続の保証はできない→service_healthy は DB の準備完了を待ち、service_completed_successfully は migration の正常終了を待つ。どちらも起動時の条件で、稼働中の接続は保証しない
-3. コンテナ内の localhost の意味: docker-composeで管理されているネットワーク内の5432ポートが開かれているコンテナ？→コンテナ自身のポートに通信する。
-4. データが残る理由: volumeという外部保存領域にデータを保管するようにしているから
-5. DB 障害と Liveness を分ける理由: APIコンテナが死んでいるのか、DBコンテナが死んでいるのかの判別がつかなくなり、障害の影響範囲の判断が遅れてしまう→APIの障害としてしまうことでAPI毎無駄に再起動しなければならなくなる事態を防ぐ
+- 実行日・OS・シェル
+- 起動結果・migration の状態
+- 画面の CRUD・絞り込み
+- ブラウザー再読込・API 再起動後のデータ
+- down/up 後のデータ
+- 公開ポート
+- 自動テストの結果
+- DB 停止時の live / ready と復旧
+- 後片付け・残った volume
+- 疑問・未解決事項
 
 ## 実装時の検証記録
 
@@ -177,20 +214,20 @@ docker compose -f docker/compose.yaml --profile test down
 
 | 確認・コマンド | 結果 |
 | --- | --- |
-| `docker compose -f docker/compose.yaml config --quiet` | 成功 |
-| `docker compose -f docker/compose.yaml up --build -d` | 成功。migration 終了0、API/DB healthy、Web Up |
+| `docker compose -f phases/01-compose/compose.yaml config --quiet` | 成功 |
+| `docker compose -f phases/01-compose/compose.yaml up --build -d` | 成功。migration 終了0、API/DB healthy、Web Up |
 | `npm --prefix app/web run build` | TypeScript 型チェック・Vite build 成功 |
-| `docker compose -f docker/compose.yaml --profile test run --build --rm tests` | 専用 PostgreSQL 上で15件成功 |
-| `docker compose -f docker/compose.yaml exec -T api alembic check` | モデルと migration に差分なし |
-| `docker compose -f docker/compose.yaml exec -T api python -m pip check` | 依存不整合なし |
-| `docker compose -f docker/compose.yaml exec -T web nginx -t` | 設定構文正常 |
+| `docker compose -f phases/01-compose/compose.yaml --profile test run --build --rm tests` | 専用 PostgreSQL 上で15件成功 |
+| `docker compose -f phases/01-compose/compose.yaml exec -T api alembic check` | モデルと migration に差分なし |
+| `docker compose -f phases/01-compose/compose.yaml exec -T api python -m pip check` | 依存不整合なし |
+| `docker compose -f phases/01-compose/compose.yaml exec -T web nginx -t` | 設定構文正常 |
 | 既存 Edge を一時的な Playwright から操作 | 作成・一覧・編集・絞り込み・再読込保持・削除に成功、JavaScript エラーなし |
 | 本体 API 再起動 | 検証用タスクを保持 |
 | DB 停止・再開 | live 200 / ready 503、再開後は API 再起動なしで ready 200 |
 | 通常の down/up | 同じタスクを保持、確認後に検証用タスクだけ削除 |
 | 公開ポート | Web の `127.0.0.1:8080` だけ。API/DB のホスト公開なし |
 | `.env` | ローカル専用のランダム値で新規作成、Git 除外を確認 |
-| `docker compose -f docker/compose.yaml --profile test down` | コンテナ・ネットワークを停止・削除。`workboard_postgres-data` が残っていることを確認 |
+| `docker compose -f phases/01-compose/compose.yaml --profile test down` | コンテナ・ネットワークを停止・削除。`workboard_postgres-data` が残っていることを確認 |
 
 テストでは Starlette が HTTPX に関する非推奨警告を1件表示しました。テストは成功しており、依存更新時に再確認します。ブラウザー確認用 Playwright は OS の一時フォルダーに導入し、アプリの依存には追加していません。Linux/macOS のホスト操作、volume 削除によるデータ消失実験、AWS・Kubernetes 操作は未実施です。
 

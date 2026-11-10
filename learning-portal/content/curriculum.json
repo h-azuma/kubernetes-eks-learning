@@ -44,10 +44,11 @@
           "body": "バージョンが返ればCLIの実行は確認できます。Dockerエンジンの起動、DB接続、WSL連携や互換性まで確認できたとは限りません。",
           "steps": [
             {
-              "title": "PowerShellで確認",
+              "title": "シェルで確認",
               "description": "リポジトリ直下で実行する参照のみの処理です。",
-              "command": "powershell -NoProfile -File .\\scripts\\preflight.ps1",
-              "expected": "Gitが確認できれば終了コード0。他ツールの未導入も区別して表示。"
+              "command": "powershell -NoProfile -File .\\tools\\preflight.ps1",
+              "expected": "Gitが確認できれば終了コード0。他ツールの未導入も区別して表示。",
+              "linuxCommand": "bash tools/preflight.sh"
             }
           ]
         },
@@ -68,26 +69,21 @@
           "id": "practice-lab-2",
           "kind": "practice",
           "title": "実習: 検証コマンド・期待結果",
-          "body": "Windows PowerShell（リポジトリ直下）:",
+          "body": "リポジトリ直下で実行します。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / Windows / Linux",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "powershell -NoProfile -File .\\scripts\\preflight.ps1\n$LASTEXITCODE",
-              "expected": "Linux / macOS / WSL の Bash（リポジトリ直下）:"
+              "command": "powershell -NoProfile -File .\\tools\\preflight.ps1\n$LASTEXITCODE",
+              "expected": "Git、Docker、Docker Compose、kubectl、kind、Python、Node.js、AWS CLI、Terraform の結果が表示される。Git のバージョン取得に成功すれば終了コード 0。他ツールは未導入でもよい。Bash は `python3`、PowerShell は `python` を確認する。各シェルの PATH が異なると結果も変わる。\n\nコマンド未検出なら PATH と導入先を確認する。「確認失敗」なら対象のバージョンコマンドを単独で実行し、終了コードと出力を調べる。実行ポリシーの拒否はシェルの設定として確認する。\n\nGit 初期化済みの作業コピーでは、次で除外設定も観察できる:",
+              "linuxCommand": "bash -n tools/preflight.sh\nbash tools/preflight.sh\necho $?"
             },
             {
-              "title": "手順 2 / Bash",
-              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "bash -n scripts/preflight.sh\nbash scripts/preflight.sh\necho $?",
-              "expected": "Git、Docker、Docker Compose、kubectl、kind、Python、Node.js、AWS CLI、Terraform の結果が表示される。Git のバージョン取得に成功すれば終了コード 0。他ツールは未導入でもよい。Bash は python3、PowerShell は python を確認する。各シェルの PATH が異なると結果も変わる。\n\nコマンド未検出なら PATH と導入先を確認する。「確認失敗」なら対象のバージョンコマンドを単独で実行し、終了コードと出力を調べる。実行ポリシーの拒否はシェルの設定として確認する。\n\nGit 初期化済みの作業コピーでは、次で除外設定も観察できる:"
-            },
-            {
-              "title": "手順 3 / 共通コマンド",
+              "title": "手順 2 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "git check-ignore --no-index .env terraform/environments/lab/terraform.tfvars terraform/environments/lab/terraform.tfstate credentials.json private.key\ngit check-ignore --no-index .env.example terraform/environments/lab/terraform.tfvars.example",
-              "expected": "最初のコマンドは全対象のパスを表示して終了コード 0。次は何も表示せず終了コード 1（例示ファイルは除外されない）。ファイルを作る必要はない。未初期化なら git init を行うか、Git の除外確認は未実施として記録する。"
+              "expected": "最初のコマンドは全対象のパスを表示して終了コード 0。次は何も表示せず終了コード 1（例示ファイルは除外されない）。ファイルを作る必要はない。未初期化なら `git init` を行うか、Git の除外確認は未実施として記録する。"
             }
           ]
         }
@@ -243,7 +239,7 @@
         },
         {
           "label": "Lab 00 原本",
-          "path": "labs/00-repository-foundation/README.md"
+          "path": "phases/00-foundation/README.md"
         }
       ]
     },
@@ -294,13 +290,13 @@
             {
               "title": "Composeの状態を読む",
               "description": "既存コンテナを変更せず一覧を確認します。停止済みなら何も動いていないことが観察結果です。",
-              "command": "docker compose -f docker/compose.yaml ps -a",
+              "command": "docker compose -f phases/01-compose/compose.yaml ps -a",
               "expected": "稼働中ならAPI/DBがhealthy、WebがUp、migrationがExited 0。"
             },
             {
               "title": "準備の経過を読む",
               "description": "migrationとAPIのログを参照します。",
-              "command": "docker compose -f docker/compose.yaml logs --tail=30 migrate api",
+              "command": "docker compose -f phases/01-compose/compose.yaml logs --tail=30 migrate api",
               "expected": "migrationの正常終了とAPIの起動が分かる。"
             }
           ]
@@ -314,7 +310,8 @@
               "title": "現在の8080のhealthを見る",
               "description": "返答の意味に加え、今の8080がComposeかkindかをメモします。",
               "command": "Invoke-RestMethod http://localhost:8080/health/ready",
-              "expected": "DBに接続できれば正常応答。未起動なら接続失敗も観察結果。"
+              "expected": "DBに接続できれば正常応答。未起動なら接続失敗も観察結果。",
+              "linuxCommand": "curl -i http://localhost:8080/health/ready"
             }
           ]
         },
@@ -322,26 +319,21 @@
           "id": "practice-setup-1",
           "kind": "practice",
           "title": "実習: Phase 1: Compose 上で WorkBoard を起動する",
-          "body": "Docker Desktop の Linux コンテナエンジンを起動し、リポジトリ直下で操作します。Docker エンジンは docker info で確認できます。kind・Terraform は今回不要です。\n\n初回だけ .env.example を .env にコピーします。すでに .env がある場合は上書きせず、そのファイルを使ってください。\n\nWindows PowerShell:",
+          "body": "Docker の Linux コンテナエンジン（Windows / macOS は Docker Desktop、Linux は Docker Engine または Docker Desktop）を起動し、リポジトリ直下で操作します。Docker エンジンは `docker info` で確認できます。kind・Terraform は今回不要です。\n\n初回だけ `.env.example` を `.env` にコピーします。すでに `.env` がある場合は上書きせず、そのファイルを使ってください。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / Windows / Linux",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "if (-not (Test-Path .env)) { Copy-Item .env.example .env }",
-              "expected": "Linux / macOS / WSL の Bash:"
+              "expected": "`.env` をエディターで開き、`POSTGRES_PASSWORD` の例をローカル専用の値に変更します。このファイルは Git の対象外です。DB 初期化後に値を変更しても既存 DB のパスワードは自動で変わりません。\n\n共通の起動コマンド:",
+              "linuxCommand": "if [ ! -f .env ]; then cp .env.example .env; fi"
             },
             {
-              "title": "手順 2 / Bash",
+              "title": "手順 2 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "if [ ! -f .env ]; then cp .env.example .env; fi",
-              "expected": ".env をエディターで開き、POSTGRES_PASSWORD の例をローカル専用の値に変更します。このファイルは Git の対象外です。DB 初期化後に値を変更しても既存 DB のパスワードは自動で変わりません。\n\n共通の起動コマンド:"
-            },
-            {
-              "title": "手順 3 / 共通コマンド",
-              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "docker compose -f docker/compose.yaml up --build -d\ndocker compose -f docker/compose.yaml ps -a",
-              "expected": "migrate は正常終了（Exited 0）、api と db は healthy、web は Up が期待結果です。初回はイメージの取得・ビルドに時間がかかります。WorkBoard（http://localhost:8080） を開くとタスクを作成・編集・削除できます。API ドキュメント（http://localhost:8080/docs） も利用できます。\n\n次は Lab 01（labs/01-compose-basics/README.md） を上から進めてください。観察結果と問いへの回答は、同ファイル末尾の 「学習メモ」 に直接記入します。構成図（docs/architecture/01-compose.md） と 起動・永続化の ADR（docs/adr/0002-compose-startup-and-persistence.md） に採用理由を記載しています。"
+              "command": "docker compose -f phases/01-compose/compose.yaml up --build -d\ndocker compose -f phases/01-compose/compose.yaml ps -a",
+              "expected": "`migrate` は正常終了（Exited 0）、`api` と `db` は healthy、`web` は Up が期待結果です。初回はイメージの取得・ビルドに時間がかかります。WorkBoard（http://localhost:8080） を開くとタスクを作成・編集・削除できます。API ドキュメント（http://localhost:8080/docs） も利用できます。"
             }
           ]
         },
@@ -362,8 +354,8 @@
             {
               "title": "手順 1 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "docker compose -f docker/compose.yaml config --quiet\ndocker compose -f docker/compose.yaml up --build -d\ndocker compose -f docker/compose.yaml ps -a\ndocker compose -f docker/compose.yaml logs --tail=30 migrate api",
-              "expected": "設定確認が成功し、DB→migration→API→Web の順に準備されます。migrate の Exited 0 は正常終了です。API・DB が healthy、Web が Up になるまで待ちます。\n\n失敗時は .env の有無、Docker Desktop の起動、8080 番の重複、logs を確認します。初期化後に .env の認証値を変えると DB 内の値と不一致になります。volume 削除で解決しようとせず、まず元の設定を確認してください。引数なしの config は展開後の認証値も表示するため、ログ共有時は --quiet を使います。"
+              "command": "docker compose -f phases/01-compose/compose.yaml config --quiet\ndocker compose -f phases/01-compose/compose.yaml up --build -d\ndocker compose -f phases/01-compose/compose.yaml ps -a\ndocker compose -f phases/01-compose/compose.yaml logs --tail=30 migrate api",
+              "expected": "設定確認が成功し、DB→migration→API→Web の順に準備されます。`migrate` の Exited 0 は正常終了です。API・DB が healthy、Web が Up になるまで待ちます。\n\n失敗時は `.env` の有無、Docker Desktop の起動、8080 番の重複、`logs` を確認します。初期化後に `.env` の認証値を変えると DB 内の値と不一致になります。volume 削除で解決しようとせず、まず元の設定を確認してください。引数なしの `config` は展開後の認証値も表示するため、ログ共有時は `--quiet` を使います。"
             }
           ]
         },
@@ -378,20 +370,15 @@
           "id": "practice-lab-4",
           "kind": "practice",
           "title": "実習: 3. API と health を確認する",
-          "body": "PowerShell:",
+          "body": "",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / Windows / Linux",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "Invoke-RestMethod http://localhost:8080/health/live\nInvoke-RestMethod http://localhost:8080/health/ready\nInvoke-RestMethod http://localhost:8080/api/v1/tasks",
-              "expected": "Bash:"
-            },
-            {
-              "title": "手順 2 / Bash",
-              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "curl -i http://localhost:8080/health/live\ncurl -i http://localhost:8080/health/ready\ncurl -i http://localhost:8080/api/v1/tasks",
-              "expected": "正常時は両 health が 200、一覧には画面で作成したタスクが出ます。"
+              "expected": "正常時は両 health が 200、一覧には画面で作成したタスクが出ます。",
+              "linuxCommand": "curl -i http://localhost:8080/health/live\ncurl -i http://localhost:8080/health/ready\ncurl -i http://localhost:8080/api/v1/tasks"
             }
           ]
         },
@@ -405,13 +392,13 @@
             {
               "title": "手順 1 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "docker compose -f docker/compose.yaml restart api\ndocker compose -f docker/compose.yaml ps\ndocker compose -f docker/compose.yaml port web 80\ndocker compose -f docker/compose.yaml port api 8000\ndocker compose -f docker/compose.yaml port db 5432",
-              "expected": "API が healthy に戻ったらブラウザーを再読込します。タスクは残ります。Web の公開先は 127.0.0.1:8080、API/DB は公開ポートなし（port コマンドの「公開されていない」というエラーは期待どおり）です。\n\n通常の down と再起動も試せます:"
+              "command": "docker compose -f phases/01-compose/compose.yaml restart api\ndocker compose -f phases/01-compose/compose.yaml ps\ndocker compose -f phases/01-compose/compose.yaml port web 80\ndocker compose -f phases/01-compose/compose.yaml port api 8000\ndocker compose -f phases/01-compose/compose.yaml port db 5432",
+              "expected": "API が healthy に戻ったらブラウザーを再読込します。タスクは残ります。Web の公開先は `127.0.0.1:8080`、API/DB は公開ポートなし（port コマンドの「公開されていない」というエラーは期待どおり）です。\n\n通常の `down` と再起動も試せます:"
             },
             {
               "title": "手順 2 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "docker compose -f docker/compose.yaml down\ndocker compose -f docker/compose.yaml up -d",
+              "command": "docker compose -f phases/01-compose/compose.yaml down\ndocker compose -f phases/01-compose/compose.yaml up -d",
               "expected": "同じタスクが残ることを確認してから、画面の「削除」で検証用タスクを削除してください。"
             }
           ]
@@ -426,8 +413,8 @@
             {
               "title": "手順 1 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "docker compose -f docker/compose.yaml --profile test run --build --rm tests",
-              "expected": "テストは workboard_test という専用 PostgreSQL の tmpfs 上で migration・CRUD・入力エラー・health を確認します。終了コード 0、全テスト成功が期待結果です。学習用 DB のデータを削除しません。"
+              "command": "docker compose -f phases/01-compose/compose.yaml --profile test run --build --rm tests",
+              "expected": "テストは `workboard_test` という専用 PostgreSQL の tmpfs 上で migration・CRUD・入力エラー・health を確認します。終了コード 0、全テスト成功が期待結果です。学習用 DB のデータを削除しません。"
             }
           ]
         },
@@ -441,19 +428,20 @@
             {
               "title": "手順 1 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "docker compose -f docker/compose.yaml stop db",
-              "expected": "PowerShell なら curl.exe、Bash なら curl を使って次の URL のステータスを確認します。PowerShell の curl は別コマンドの別名になり得るため curl.exe を明記します。"
+              "command": "docker compose -f phases/01-compose/compose.yaml stop db",
+              "expected": "次の URL のステータスを確認します。PowerShell の `curl` は別コマンドの別名になり得るため `curl.exe` を明記します。"
             },
             {
-              "title": "手順 2 / PowerShell",
+              "title": "手順 2 / Windows / Linux",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "curl.exe -i http://localhost:8080/health/live\ncurl.exe -i http://localhost:8080/health/ready",
-              "expected": "期待結果は Liveness 200、Readiness 503。API の DB 接続は数秒で失敗し、画面でのタスク操作も失敗し得ます。API のコンテナが unhealthy になっても、Compose が自動で再起動するとは限りません。\n\n次で復旧し、Readiness が 200 に戻るまで待ちます。"
+              "expected": "期待結果は Liveness 200、Readiness 503。API の DB 接続は数秒で失敗し、画面でのタスク操作も失敗し得ます。API のコンテナが unhealthy になっても、Compose が自動で再起動するとは限りません。\n\n次で復旧し、Readiness が 200 に戻るまで待ちます。",
+              "linuxCommand": "curl -i http://localhost:8080/health/live\ncurl -i http://localhost:8080/health/ready"
             },
             {
               "title": "手順 3 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "docker compose -f docker/compose.yaml start db\ndocker compose -f docker/compose.yaml ps",
+              "command": "docker compose -f phases/01-compose/compose.yaml start db\ndocker compose -f phases/01-compose/compose.yaml ps",
               "expected": "API を再起動しなくても接続が回復することと、既存タスクが残ることを観察します。volume を消す実験は今回は行いません。 実施する場合は、対象の volume と失われるデータを確認し、削除の明示承認後に別途行います。"
             }
           ]
@@ -468,8 +456,8 @@
             {
               "title": "手順 1 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "docker compose -f docker/compose.yaml --profile test down",
-              "expected": "学習用 volume は残ります。-v は付けません。テスト DB は tmpfs のためコンテナ削除で消えます。"
+              "command": "docker compose -f phases/01-compose/compose.yaml --profile test down",
+              "expected": "学習用 volume は残ります。`-v` は付けません。テスト DB は tmpfs のためコンテナ削除で消えます。"
             }
           ]
         }
@@ -732,11 +720,7 @@
         },
         {
           "label": "Lab 01 原本",
-          "path": "labs/01-compose-basics/README.md"
-        },
-        {
-          "label": "Compose初回準備",
-          "path": "README.md"
+          "path": "phases/01-compose/README.md"
         }
       ]
     },
@@ -791,9 +775,10 @@
           "steps": [
             {
               "title": "現在のシェルへ専用設定",
-              "description": "先頭のドットとスペースは現在のPowerShellへ設定を読み込む指定です。",
-              "command": ". .\\scripts\\kind-env.ps1",
-              "expected": "現在のシェルだけで専用KUBECONFIGと.toolsが使える。"
+              "description": "PowerShellの先頭のドットとスペース、Bashのsourceは、現在のシェルへ設定を読み込む指定です。",
+              "command": ". .\\phases\\02-kind-basics\\scripts\\env.ps1",
+              "expected": "現在のシェルだけで専用KUBECONFIGと.toolsが使える。",
+              "linuxCommand": "source phases/02-kind-basics/scripts/env.sh"
             },
             {
               "title": "管理階層を一覧にする",
@@ -830,42 +815,50 @@
           "id": "practice-lab-1",
           "kind": "practice",
           "title": "実習: 前提条件",
-          "body": "Lab 01 完了、Docker Desktop の Linux コンテナエンジン、kubectl 1.34〜1.36、kind v0.33.0。今回のノードは Kubernetes v1.35.8 です。Docker にローカルノード1台を動かす CPU・メモリ・ディスクの空きが必要です。初回はイメージをダウンロードしますが AWS 費用はありません。\n\nこの DB はダミーデータ専用です。Compose の DB/volume/.env を使わず、Pod を削除するとデータは消えます。Phase 3 で永続化を導入します。",
+          "body": "Lab 01 完了、Linux コンテナエンジンが動く Docker（Windows / macOS は Docker Desktop、Linux は Docker Engine または Docker Desktop）、kubectl 1.34〜1.36、kind v0.33.0。今回のノードは Kubernetes v1.35.8 です。Docker にローカルノード1台を動かす CPU・メモリ・ディスクの空きが必要です。初回はイメージをダウンロードしますが AWS 費用はありません。\n\nこの DB はダミーデータ専用です。Compose の DB/volume/.env を使わず、Pod を削除するとデータは消えます。Phase 3 で永続化を導入します。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
         },
         {
           "id": "practice-lab-2",
           "kind": "practice",
           "title": "実習: 1. ツール導入とクラスター構築",
-          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。\n\n\nWindows PowerShell 5.1 以降で初回だけ実行します。",
+          "body": "すべてリポジトリ直下で実行します。`-f` は定義ファイル、`-n` は Namespace、`--context` は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は `kind-workboard-lab` を指定します。\n\n\n初回だけ実行します。Windows は PowerShell 5.1 以降、Linux / macOS / WSL は Bash（Linux 側の条件は「Linux / macOS / WSL での前提」を参照）で行います。PowerShell と Bash は同じ処理をするスクリプトです。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / Windows / Linux",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "powershell -NoProfile -File scripts/kind-install.ps1\npowershell -NoProfile -File scripts/kind-up.ps1",
-              "expected": "installer は公式 kind を取得し SHA-256 を検証して .tools/kind.exe に置きます。管理者権限や永続的な PATH 変更は不要です。構築スクリプトは Docker・kubectl の対応を確認し、専用 kubeconfig .kube/workboard-kind.yaml を作ります。既存クラスター・DB の削除はしません。同名クラスターだけあり、専用 kubeconfig がない場合は確認のため停止します。\n\n起動処理は以下の順です。固定秒数の sleep ではなく、実際の状態を待ちます。\n\n1. kind create cluster（存在しなければ作成）\n2. 同じ API/Web Dockerfile のビルド\n3. kind load docker-image でノードへイメージ投入\n4. Namespace・DB 適用 → DB Deployment の準備完了待ち\n5. migration Job 適用 → Complete 待ち\n6. Web/API 適用 → Deployment の準備完了待ち\n\n期待結果は Node が Ready、Deployment が各1 Pod、migration Job が Completed です。イメージ投入はホストの Docker と kind ノードのイメージ保存先が別であるため必要です。API/Web は imagePullPolicy: Never なので投入忘れは ErrImageNeverPull になります。PostgreSQL は IfNotPresent でノードが公式レジストリから取得します。ローカル学習用ビルドは --provenance=false とし、複数 platform・attestation の manifest をノードへ持ち込む問題を避けます。"
+              "command": "powershell -NoProfile -File tools/kind-install.ps1\npowershell -NoProfile -File phases/02-kind-basics/scripts/up.ps1",
+              "expected": "installer は公式 kind を取得し SHA-256 を検証して、Windows では `.tools/kind.exe`、Linux では `.tools/kind` に置きます。管理者権限や永続的な PATH 変更は不要です。構築スクリプトは Docker・kubectl の対応を確認し、専用 kubeconfig `.kube/workboard-kind.yaml` を作ります。既存クラスター・DB の削除はしません。同名クラスターだけあり、専用 kubeconfig がない場合は確認のため停止します。\n\n起動処理は以下の順です。固定秒数の sleep ではなく、実際の状態を待ちます。\n\n1. `kind create cluster`（存在しなければ作成）\n2. 同じ API/Web Dockerfile のビルド\n3. `kind load docker-image` でノードへイメージ投入\n4. Namespace・DB 適用 → DB Deployment の準備完了待ち\n5. migration Job 適用 → Complete 待ち\n6. Web/API 適用 → Deployment の準備完了待ち\n\n期待結果は Node が Ready、Deployment が各1 Pod、migration Job が Completed です。イメージ投入はホストの Docker と kind ノードのイメージ保存先が別であるため必要です。API/Web は `imagePullPolicy: Never` なので投入忘れは `ErrImageNeverPull` になります。PostgreSQL は `IfNotPresent` でノードが公式レジストリから取得します。ローカル学習用ビルドは `--provenance=false` とし、複数 platform・attestation の manifest をノードへ持ち込む問題を避けます。",
+              "linuxCommand": "bash tools/kind-install.sh\nbash phases/02-kind-basics/scripts/up.sh"
             }
           ]
         },
         {
           "id": "practice-lab-3",
           "kind": "practice",
-          "title": "実習: 2. 現在の PowerShell で対象を選び、状態を観察する",
-          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。\n\n\n構築済みのこの作業環境では、まずここから進めてください。 新しい PowerShell を開くたびに最初の行を実行します。先頭のドットとスペースは、設定を今のシェルへ読み込む指定です。",
+          "title": "実習: 2. 現在のシェルで対象を選び、状態を観察する",
+          "body": "すべてリポジトリ直下で実行します。`-f` は定義ファイル、`-n` は Namespace、`--context` は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は `kind-workboard-lab` を指定します。\n\n\n構築済みのこの作業環境では、まずここから進めてください。 新しいターミナルを開くたびに最初の行を実行します。PowerShell の先頭のドットとスペース、Bash の `source` は、設定を今のシェルへ読み込む指定です（Bash の `env.sh` は実行ではなく `source` で使います）。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / Windows / Linux",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": ". .\\scripts\\kind-env.ps1\nkubectl --context kind-workboard-lab get nodes\nkubectl --context kind-workboard-lab -n workboard get pods,rs,deploy,svc\nkubectl --context kind-workboard-lab -n workboard get pods --show-labels",
-              "expected": "kind-env.ps1 は今のシェルだけに .tools と専用 KUBECONFIG を設定します。標準 kubeconfig やシステム PATH は変更しません。Compose 用コンテナはこの一覧には出ません。\n\nAPI の所有関係も調べます。"
+              "command": ". .\\phases\\02-kind-basics\\scripts\\env.ps1",
+              "expected": "",
+              "linuxCommand": "source phases/02-kind-basics/scripts/env.sh"
             },
             {
-              "title": "手順 2 / PowerShell",
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-lab get nodes\nkubectl --context kind-workboard-lab -n workboard get pods,rs,deploy,svc\nkubectl --context kind-workboard-lab -n workboard get pods --show-labels",
+              "expected": "`scripts/env.ps1`（Bash は `env.sh`）は今のシェルだけに `.tools` と専用 KUBECONFIG を設定します。標準 kubeconfig やシステム PATH は変更しません。Compose 用コンテナはこの一覧には出ません。\n\nAPI の所有関係も調べます。"
+            },
+            {
+              "title": "手順 3 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o wide\nkubectl --context kind-workboard-lab -n workboard get rs -l app=workboard-api -o wide\nkubectl --context kind-workboard-lab -n workboard describe deployment workboard-api\nkubectl --context kind-workboard-lab -n workboard describe service workboard-api\nkubectl --context kind-workboard-lab -n workboard get endpointslices -l kubernetes.io/service-name=workboard-api",
-              "expected": "Deployment → ReplicaSet → Pod の順に管理されます。Service の selector app=workboard-api と Pod の label を見比べてください。Service の ClusterIP と Pod IP は別です。EndpointSlice には転送先 Pod のアドレスが含まれます。"
+              "expected": "Deployment → ReplicaSet → Pod の順に管理されます。Service の selector `app=workboard-api` と Pod の label を見比べてください。Service の ClusterIP と Pod IP は別です。EndpointSlice には転送先 Pod のアドレスが含まれます。"
             }
           ]
         },
@@ -873,20 +866,21 @@
           "id": "practice-lab-4",
           "kind": "practice",
           "title": "実習: 3. ブラウザーで同じアプリを使う",
-          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。\n\n\n8080 番を Compose 等で使っていないことを確認します。次のコマンドは実行中のまま残し、ブラウザーを別に開きます。",
+          "body": "すべてリポジトリ直下で実行します。`-f` は定義ファイル、`-n` は Namespace、`--context` は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は `kind-workboard-lab` を指定します。\n\n\n8080 番を Compose 等で使っていないことを確認します。次のコマンドは実行中のまま残し、ブラウザーを別に開きます。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "kubectl --context kind-workboard-lab -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8080:80",
-              "expected": "8080:80 はホスト8080番から Service80番への転送です。Forwarding from 127.0.0.1:8080 -> 80 が期待結果。http://localhost:8080（http://localhost:8080） でダミータスク「kind の学習」を作り、編集・ステータス絞り込み・再読込を試してください。削除の確認は別のダミータスクで行い、「kind の学習」は次の実験用に残します。\n\nService を指定した port-forward は、selector から選ばれた Web Pod へトンネルします。ClusterIP 自体を外部公開する操作ではありません。Web から API への通信では実際に ClusterIP Service を使います。\n\n他の PowerShell で以下を実行すれば health も確認できます。"
+              "expected": "`8080:80` はホスト8080番から Service80番への転送です。`Forwarding from 127.0.0.1:8080 -> 80` が期待結果。http://localhost:8080（http://localhost:8080） でダミータスク「kind の学習」を作り、編集・ステータス絞り込み・再読込を試してください。削除の確認は別のダミータスクで行い、「kind の学習」は次の実験用に残します。\n\nService を指定した port-forward は、selector から選ばれた Web Pod へトンネルします。ClusterIP 自体を外部公開する操作ではありません。Web から API への通信では実際に ClusterIP Service を使います。\n\n別のターミナルで以下を実行すれば health も確認できます。"
             },
             {
-              "title": "手順 2 / PowerShell",
+              "title": "手順 2 / Windows / Linux",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "curl.exe -i http://localhost:8080/health/live\ncurl.exe -i http://localhost:8080/health/ready",
-              "expected": "どちらも200が期待結果です。port-forward は永続的な公開設定ではなく、コマンドを止めると接続できなくなります。"
+              "expected": "どちらも200が期待結果です。port-forward は永続的な公開設定ではなく、コマンドを止めると接続できなくなります。",
+              "linuxCommand": "curl -i http://localhost:8080/health/live\ncurl -i http://localhost:8080/health/ready"
             }
           ]
         },
@@ -894,13 +888,20 @@
           "id": "practice-lab-5",
           "kind": "practice",
           "title": "実習: 4. API Pod を削除し、自動復旧を観察する",
-          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。\n\n\n別の PowerShell で専用設定を読み込み、現在の Pod の名前・UID・IP を記録します。",
+          "body": "すべてリポジトリ直下で実行します。`-f` は定義ファイル、`-n` は Namespace、`--context` は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は `kind-workboard-lab` を指定します。\n\n\n別のターミナルで専用設定を読み込み、現在の Pod の名前・UID・IP を記録します。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / Windows / Linux",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": ". .\\scripts\\kind-env.ps1\nkubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP\nkubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-api\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-api --timeout=180s\nkubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP",
+              "command": ". .\\phases\\02-kind-basics\\scripts\\env.ps1",
+              "expected": "",
+              "linuxCommand": "source phases/02-kind-basics/scripts/env.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP\nkubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-api\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-api --timeout=180s\nkubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP",
               "expected": "名前・UID が変わり、Pod が1つに戻ります。IP は再利用される場合もあるので「必ず変わる」とは判断しません。ブラウザー再読込でタスクが残り、同じ URL から操作できることを確認します。API Pod を消しただけなので DB は残っています。"
             }
           ]
@@ -909,17 +910,17 @@
           "id": "practice-lab-6",
           "kind": "practice",
           "title": "実習: 5. マニフェストを再適用する",
-          "body": "すべてリポジトリ直下で実行します。-f は定義ファイル、-n は Namespace、--context は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は kind-workboard-lab を指定します。",
+          "body": "すべてリポジトリ直下で実行します。`-f` は定義ファイル、`-n` は Namespace、`--context` は操作対象クラスターの設定名です。今回の全 Kubernetes 操作は `kind-workboard-lab` を指定します。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "kubectl --context kind-workboard-lab apply -f kubernetes/kind/namespace.yaml -f kubernetes/kind/postgres.yaml -f kubernetes/kind/migrate.yaml -f kubernetes/kind/app.yaml",
-              "expected": "定義を変更していなければ基本的に unchanged です。再適用だけで毎回新しい Pod が作られるわけではありません。完了済み migration Job も再実行されません。\n\nアプリコードを変更して構築スクリプトを再実行した場合は、同じ :kind タグを使うため、以下で新しいイメージから Pod を作り直します。"
+              "command": "kubectl --context kind-workboard-lab apply -f phases/02-kind-basics/manifests/namespace.yaml -f phases/02-kind-basics/manifests/postgres.yaml -f phases/02-kind-basics/manifests/migrate.yaml -f phases/02-kind-basics/manifests/app.yaml",
+              "expected": "定義を変更していなければ基本的に `unchanged` です。再適用だけで毎回新しい Pod が作られるわけではありません。完了済み migration Job も再実行されません。\n\nアプリコードを変更して構築スクリプトを再実行した場合は、同じ `:kind` タグを使うため、以下で新しいイメージから Pod を作り直します。"
             },
             {
-              "title": "手順 2 / PowerShell",
+              "title": "手順 2 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "kubectl --context kind-workboard-lab -n workboard rollout restart deployment/workboard-api deployment/workboard-web",
               "expected": "Web Pod を置き換えると port-forward の接続も終了することがあります。その場合は手順3を再実行します。"
@@ -934,15 +935,15 @@
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "kubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-postgres\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-postgres --timeout=180s",
-              "expected": "DB は新しい emptyDir で起動します。既存の migration Job は完了済みなので、そのままではテーブルがありません。/health/ready は接続の SELECT 1 だけを確認するため200に戻る場合もありますが、CRUD が使えることまでは保証しません。\n\nスキーマを戻すには Job だけを削除して再適用します。"
+              "expected": "DB は新しい emptyDir で起動します。既存の migration Job は完了済みなので、そのままではテーブルがありません。`/health/ready` は接続の `SELECT 1` だけを確認するため200に戻る場合もありますが、CRUD が使えることまでは保証しません。\n\nスキーマを戻すには Job だけを削除して再適用します。"
             },
             {
-              "title": "手順 2 / PowerShell",
+              "title": "手順 2 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "kubectl --context kind-workboard-lab -n workboard delete job workboard-migrate\nkubectl --context kind-workboard-lab apply -f kubernetes/kind/migrate.yaml\nkubectl --context kind-workboard-lab -n workboard wait --for=condition=complete job/workboard-migrate --timeout=180s",
+              "command": "kubectl --context kind-workboard-lab -n workboard delete job workboard-migrate\nkubectl --context kind-workboard-lab apply -f phases/02-kind-basics/manifests/migrate.yaml\nkubectl --context kind-workboard-lab -n workboard wait --for=condition=complete job/workboard-migrate --timeout=180s",
               "expected": "ブラウザーを再読込すると一覧が空になります。タスクを新規作成して動作復旧を確認します。元のタスクの復元ではありません。"
             }
           ]
@@ -951,33 +952,25 @@
           "id": "practice-lab-8",
           "kind": "practice",
           "title": "実習: 失敗時に確認すること",
-          "body": "- kind が見つからない: installer の後、この PowerShell で kind-env.ps1 を読み込んだか。\n- 接続先がない/証明書エラー: 専用 KUBECONFIG と context を使っているか。他のクラスターへ切り替えて試さない。\n- ErrImageNeverPull: kind load docker-image ... --name workboard-lab が成功したか。\n- Job が失敗: kubectl --context kind-workboard-lab -n workboard logs job/workboard-migrate と DB の状態を確認。\n- API が動かない: describe pod、logs deployment/workboard-api、get events --sort-by=.metadata.creationTimestamp を同じ context/Namespace で確認。\n- Service から接続できない: selector・label・EndpointSlice、readiness、アプリの待受ポートを確認。\n- Web から502: Nginx の接続先と DNS、API の準備状態を確認。Compose の Docker DNS アドレスを kind で固定しない。",
+          "body": "- `kind` が見つからない: installer の後、このシェルで `scripts/env.ps1`（Bash は `source .../env.sh`）を読み込んだか。\n- 接続先がない/証明書エラー: 専用 KUBECONFIG と context を使っているか。他のクラスターへ切り替えて試さない。\n- `ErrImageNeverPull`: `kind load docker-image ... --name workboard-lab` が成功したか。\n- Job が失敗: `kubectl --context kind-workboard-lab -n workboard logs job/workboard-migrate` と DB の状態を確認。\n- API が動かない: `describe pod`、`logs deployment/workboard-api`、`get events --sort-by=.metadata.creationTimestamp` を同じ context/Namespace で確認。\n- Service から接続できない: selector・label・EndpointSlice、readiness、アプリの待受ポートを確認。\n- Web から502: Nginx の接続先と DNS、API の準備状態を確認。Compose の Docker DNS アドレスを kind で固定しない。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
         },
         {
           "id": "practice-lab-9",
           "kind": "practice",
-          "title": "実習: Linux / macOS / WSL での再現",
-          "body": "Windows 用スクリプトは使わず、公式 release の OS/CPU に合う kind v0.33.0 と .sha256sum を取得・照合し、実行可能にして .tools/kind に置きます。公式導入手順（https://kind.sigs.k8s.io/docs/user/quick-start/#installation） に従ってください。kubectl は1.34〜1.36を使います。",
-          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
-          "steps": [
-            {
-              "title": "手順 1 / Bash",
-              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
-              "command": "export PATH=\"$PWD/.tools:$PATH\"\nexport KUBECONFIG=\"$PWD/.kube/workboard-kind.yaml\"\nmkdir -p .kube\nkind create cluster --name workboard-lab --config kubernetes/kind/cluster.yaml --kubeconfig \"$KUBECONFIG\" --wait 180s\ndocker build --provenance=false --target runtime -t workboard-api:kind app/api\ndocker build --provenance=false -t workboard-web:kind app/web\nkind load docker-image workboard-api:kind workboard-web:kind --name workboard-lab\nkubectl --context kind-workboard-lab apply -f kubernetes/kind/namespace.yaml -f kubernetes/kind/postgres.yaml\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-postgres --timeout=180s\nkubectl --context kind-workboard-lab apply -f kubernetes/kind/migrate.yaml\nkubectl --context kind-workboard-lab -n workboard wait --for=condition=complete job/workboard-migrate --timeout=180s\nkubectl --context kind-workboard-lab apply -f kubernetes/kind/app.yaml\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-api --timeout=180s\nkubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-web --timeout=180s",
-              "expected": "初回構築用です。同名クラスターがある場合は作成を繰り返さず、対象と kubeconfig を確認します。以後の kubectl 操作は上の手順と共通です。Bash の HTTP 確認には curl.exe の代わりに curl を使います。"
-            }
-          ]
+          "title": "実習: Linux / macOS / WSL での前提",
+          "body": "スクリプトは PowerShell 版と同じ処理の Bash 版（`tools/kind-install.sh`、`phases/02-kind-basics/scripts/env.sh`・`up.sh`）があり、上の手順の「Linux / macOS / WSL (Bash)」に従います。\n\n- Bash 4 以降が必要です。macOS 標準の bash 3.2 は対象外で、Homebrew などで新しい bash を入れてください。`kind-install.sh` は Linux（x86_64 / arm64）用です。macOS では 公式導入手順（https://kind.sigs.k8s.io/docs/user/quick-start/#installation） で kind v0.33.0 を入れ、`.tools/` に置くか PATH に通します。\n- Docker は Linux コンテナエンジンを起動しておき、実行ユーザーが `docker` を sudo なしで使えるようにします。WSL では Docker Desktop の WSL 統合を有効にし、WSL 内で `docker info` が成功することを確認します。\n- kubectl は 1.34〜1.36 を 公式手順（https://kubernetes.io/docs/tasks/tools/） で導入します。スクリプトは kubectl を導入しません。\n- `.tools/kind`（Linux）と `.tools/kind.exe`（Windows）は同じ `.tools/` に共存できます。同じ作業ツリーを Windows と WSL で共有する場合も、クラスター名・kubeconfig・ポートは共通です。\n- 外部コマンドは `docker`、`kind`、`kubectl`、`curl`、`sha256sum` だけです。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
         },
         {
           "id": "practice-lab-10",
           "kind": "practice",
           "title": "実習: 後片付け・再構築",
-          "body": "port-forward の PowerShell で Ctrl+C を押すとブラウザーの入口を閉じます。これはクラスターの停止ではなく、Node とアプリは動き続けます。\n\nkind クラスターを削除すると今回の DB データも失います。クラスター名と消失するデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。",
+          "body": "port-forward を実行しているターミナルで `Ctrl+C` を押すとブラウザーの入口を閉じます。これはクラスターの停止ではなく、Node とアプリは動き続けます。\n\nkind クラスターを削除すると今回の DB データも失います。クラスター名と消失するデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。",
           "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
           "steps": [
             {
-              "title": "手順 1 / PowerShell",
+              "title": "手順 1 / 共通コマンド",
               "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
               "command": "kind delete cluster --name workboard-lab",
               "expected": "削除を実施した場合、専用 kubeconfig が残っていれば対象を確認してそのファイルだけを削除してから、構築スクリプトを実行します。他の kubeconfig は削除しません。作り直したクラスターは空の DB で始まります。Compose の volume は残ります。"
@@ -1464,7 +1457,7 @@
         },
         {
           "label": "Lab 02 原本",
-          "path": "labs/02-kubernetes-basics/README.md"
+          "path": "phases/02-kind-basics/README.md"
         }
       ]
     },
@@ -1472,54 +1465,413 @@
       "id": 3,
       "slug": "storage",
       "title": "設定とデータを切り離す",
-      "subtitle": "予習 / StatefulSet・PVC・Secret",
+      "subtitle": "kind・Kustomize・StatefulSet・PVC",
       "level": "local",
-      "implemented": false,
-      "estimatedMinutes": 35,
-      "summary": "Podがなくなっても守るデータと、別途必要な保護を整理します。",
+      "implemented": true,
+      "estimatedMinutes": 70,
+      "summary": "設定・Secret・保存先をPodの寿命から切り離し、守れる範囲と守れない範囲を観察します。",
       "goals": [
-        "Namespace、ConfigMap、Secret、StatefulSet、PVC/PV、StorageClass、Kustomize、migration。",
-        "実装前に設計条件と検証方法を説明できる"
+        "Namespace・ConfigMap・Secret で、環境依存の値をアプリのイメージとマニフェスト本体から分離する。",
+        "Kustomize の base・component・overlay の役割を、`kubectl kustomize` の生成結果で確認する。",
+        "StatefulSet・PVC・PV・StorageClass の関係を観察し、Pod を作り直した後のデータの残り方を確かめる。",
+        "Secret が守る範囲と守らない範囲を、実際に読める経路から説明する。",
+        "ConfigMap/Secret の変更が Pod にどう反映されるか、migration Job を安全に再実行する方法を説明する。"
       ],
       "concepts": [
         {
+          "term": "Kustomize",
+          "description": "baseに共通のYAML、overlayに環境差分を置き、パッチとgeneratorで最終的なYAMLを組み立てます。変数展開を行うテンプレートエンジンではありません。",
+          "analogy": "原本の図面に環境別の修正指示を重ねる"
+        },
+        {
           "term": "PVC / PV",
-          "description": "アプリの保存先要求と、それに応える保存領域を分けます。",
+          "description": "アプリの保存先要求と、それに応える保存領域を分けます。PVCはNamespace内、PVはクラスター全体のオブジェクトです。",
           "analogy": "倉庫の利用申込書と割り当てられた棚"
         },
         {
           "term": "StatefulSet",
-          "description": "安定した識別子やストレージとの対応を持つPodを管理します。",
+          "description": "Podの名前と専用のPVCの対応を保つ仕組みです。バックアップやDBの高可用性までは扱いません。",
           "analogy": "名前付きの担当席と専用保管庫"
         },
         {
           "term": "ConfigMap / Secret",
-          "description": "設定と秘密情報をアプリのイメージから分離します。Secretにも権限設計が必要です。",
+          "description": "設定と秘密情報をイメージから分離します。Secretはbase64表現で暗号化ではなく、権限設計が必要です。",
           "analogy": "共有手順書と配布先を絞った鍵"
         }
       ],
       "sections": [
         {
-          "id": "preview",
-          "title": "この章は予習です",
-          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
-          "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
+          "id": "kustomize",
+          "title": "適用前に生成結果を読む",
+          "body": "新しい専用クラスター workboard-phase3 で行います。Phase 2 の workboard-lab は変更しません。\n\nbaseにはNamespaceもConfigMap/Secretもありません。overlayがnamespace・イメージ・imagePullPolicyを変え、ConfigMapとSecretを生成します。生成された名前にはハッシュが付き、参照側の名前も書き換わります。",
+          "callout": "kubectl kustomize は生成結果を表示するだけで、クラスターを変更しません。Secret の入力は Git 管理外の db.env です。",
+          "steps": [
+            {
+              "title": "Phase 3 の接続先を選ぶ",
+              "description": "今のシェルだけで Phase 3 用の kubeconfig を使います。Phase 2 の env は従来どおり workboard-lab を指します。",
+              "command": ". .\\phases\\03-config-storage\\scripts\\env.ps1",
+              "expected": "KUBECONFIG が .kube/workboard-phase3.yaml になる。",
+              "linuxCommand": "source phases/03-config-storage/scripts/env.sh"
+            },
+            {
+              "title": "overlay の生成結果を読む",
+              "description": "ハッシュ付きの名前、namespace、イメージ、Secretのbase64を確認します。",
+              "command": "kubectl kustomize phases/03-config-storage/kustomize/overlays/kind",
+              "expected": "ConfigMap/Secret の名前にハッシュが付き、Deployment等の参照名も同じになる。"
+            }
+          ]
         },
         {
           "id": "persistence",
           "title": "Podの寿命を越える保存先",
-          "body": "emptyDirからPVCへ移すと、Podの置き換えと保存領域の寿命を分離できます。StatefulSetはDBの識別子や保存先の対応を扱いやすくしますが、バックアップやDB自体の可用性を自動で完成させません。\n\n設計書はStorageClassを事前確認する方針です。ローカルノードに依存する保存先なら、ノード喪失時の復旧は別課題になります。"
+          "body": "StatefulSetのPodは固定名で、volumeClaimTemplatesからPod専用のPVCが作られます。DB Podを削除しても同じPVCに接続するため、タスクが残ります。Lab 02のemptyDirとの違いを比べます。\n\nPVCを削除するとreclaim policyにより保存領域も消え、スキーマだけをmigrationで戻すことになります。PVはノード喪失を含めた可用性の保証ではありません。",
+          "steps": [
+            {
+              "title": "PVC と PV を観察する",
+              "description": "PVCがBoundか、PVがどのPVCに対応するかを確認します。",
+              "command": "kubectl --context kind-workboard-phase3 get pvc,pv -n workboard",
+              "expected": "PVCがBoundで、対応するPVが存在する。"
+            },
+            {
+              "title": "DB Pod を作り直す",
+              "description": "ダミータスクを作成した後に実行し、名前・UID・PVC・データを比べます。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard delete pod workboard-postgres-0",
+              "expected": "Pod の UID は変わり、PVC は同じでタスクが残る。"
+            }
+          ]
         },
         {
           "id": "config",
-          "title": "設定差分を追える形にする",
-          "body": "Kustomizeのbaseに共通構成、overlayに環境差分を置く計画です。Secretに値を入れても、読み取り可能な人・Pod・保存時の保護は別途考えます。\n\n実装時には『Pod削除後に同じタスクが残るか』『PVCがどのPVに結び付くか』『誤削除から戻せるか』を別々に観察します。"
+          "title": "設定変更とmigrationの再実行",
+          "body": "ConfigMap/Secretの内容を変えると名前のハッシュが変わり、Podテンプレートが更新されて新しいPodに置き換わります。旧いConfigMapは自動では消えません。\n\nJobのspec.templateは作成後に変更できないため、参照名が変わるとapplyできません。Alembicのupgrade headは何度実行しても安全なので、構築スクリプトは完了済みJobを削除して作り直します。",
+          "steps": [
+            {
+              "title": "構築スクリプトを再実行する",
+              "description": "既存のクラスターとPVCを維持したまま、Jobを作り直します。",
+              "command": "powershell -NoProfile -File phases/03-config-storage/scripts/up.ps1",
+              "expected": "終了コード0。タスクが残り、Jobが再びCompleteになる。",
+              "linuxCommand": "bash phases/03-config-storage/scripts/up.sh"
+            }
+          ]
+        },
+        {
+          "id": "secret",
+          "title": "Secretが守る範囲を確かめる",
+          "body": "SecretはAPIに保存される設定オブジェクトで、base64表現は暗号化ではありません。読み取りやexecができる主体、保存時の保護、配布先をあわせて考えます。\n\nこのクラスターに保存時暗号化は設定していないため、その確認は未検証として記録します。",
+          "callout": "実パスワードはリポジトリに含めません。構築スクリプトがローカル専用の値を db.env に生成します。",
+          "steps": [
+            {
+              "title": "読める主体を確認する",
+              "description": "管理者とdefault ServiceAccountの違いを見ます。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard auth can-i get secrets --as=system:serviceaccount:workboard:default",
+              "expected": "管理者は yes、default ServiceAccount は no。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-1",
+          "kind": "practice",
+          "title": "実習: 前提条件",
+          "body": "Phase 2 の内容（Pod・Deployment・Service・Job）を理解していること。Linux コンテナエンジンが動く Docker（Windows / macOS は Docker Desktop、Linux は Docker Engine または Docker Desktop）、kubectl 1.34〜1.36、kind v0.33.0（導入は Phase 2 と共通の `tools/kind-install.ps1`。Bash は `tools/kind-install.sh`）。ノードは Kubernetes v1.35.8、DB は `postgres:17.11-bookworm` で、Phase 2 と同じ版です。AWS 費用はありません。\n\nこの Lab は 新しい kind クラスター `workboard-phase3` で行います。Phase 2 の `workboard-lab`、その DB、`.kube/workboard-kind.yaml` は変更しません。この Phase のファイルは `phases/03-config-storage/` だけで完結し、kind のクラスター設定 `cluster.yaml` も Phase 2 のものとは別に持ちます（内容が同じなのは Phase を独立させるための意図的な重複です）。2 つのクラスターを同時に動かせますが、Docker のメモリ・ディスクの空きが追加で必要です。\n\nポートは Phase 2 の 8080 と衝突しないよう 8081 を使います。DB はダミーデータ専用で、Compose の DB/volume/`.env` は使いません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-2",
+          "kind": "practice",
+          "title": "実習: 1. 適用前に生成結果を読む",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase3` を指定します。`kind-workboard-lab`（Lab 02）に誤って操作しないよう、毎回 context を確認してください。\n\n\n新しいターミナルごとに最初の行を実行します。`env.ps1`（Bash は `env.sh`。実行ではなく `source` で読み込みます）はこのシェルだけで Phase 3 用の kubeconfig（`.kube/workboard-phase3.yaml`）を使う設定です。Phase 2 の `env.ps1` / `env.sh` は従来どおり `workboard-lab` を指します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": ". .\\phases\\03-config-storage\\scripts\\env.ps1",
+              "expected": "",
+              "linuxCommand": "source phases/03-config-storage/scripts/env.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl kustomize phases/03-config-storage/kustomize/base\nkubectl kustomize phases/03-config-storage/kustomize/overlays/kind",
+              "expected": "Secret の入力は Git 管理外の `phases/03-config-storage/kustomize/overlays/kind/secrets/db.env` です。まだ無い場合、次の「2. 構築」のスクリプトがローカル専用のランダムな値で作成します。自分で用意する場合は、次で例ファイルをコピーして値を変えます（例ファイルはダミー値のみで、実際の値は Git に入れません）。"
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "Copy-Item phases/03-config-storage/kustomize/overlays/kind/secrets/db.env.example phases/03-config-storage/kustomize/overlays/kind/secrets/db.env",
+              "expected": "観察する点は以下です。\n\n- `base` の出力には Namespace がなく、ConfigMap/Secret も存在しません。Deployment は名前 `workboard-config`・`workboard-db` を参照するだけです。\n- `overlay` の出力では、全リソースに `namespace: workboard` が付き、イメージが `workboard-api:kind` 等になり、`imagePullPolicy: Never` が加わります。\n- ConfigMap と Secret の名前の末尾にハッシュが付き、Deployment・StatefulSet・Job の参照名も同じハッシュ付きの名前に書き換わっています。\n- Secret の `data` は base64 で表示されます。これは暗号化ではなくエンコードです。",
+              "linuxCommand": "cp phases/03-config-storage/kustomize/overlays/kind/secrets/db.env.example phases/03-config-storage/kustomize/overlays/kind/secrets/db.env"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-3",
+          "kind": "practice",
+          "title": "実習: 2. 構築",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase3` を指定します。`kind-workboard-lab`（Lab 02）に誤って操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File tools/kind-install.ps1\npowershell -NoProfile -File phases/03-config-storage/scripts/up.ps1",
+              "expected": "`kind-install.ps1`（Bash は `kind-install.sh`）は導入済みなら何もしません。Bash 版の `up.sh` は、`db.env` を `umask 077`（本人だけが読み書きできる権限）で、BOM なし・LF の1行として生成します。構築スクリプトは次の順で、固定秒数の sleep ではなく実際の状態を待ちます。\n\n1. `workboard-phase3` クラスターの作成（存在しなければ）。同名クラスターのみ・kubeconfig のみ残っている場合は確認のため停止します。`workboard-lab` には何も適用しません。\n2. 同じ API/Web Dockerfile のビルドと `kind load docker-image`（`imagePullPolicy: Never` のため投入忘れは `ErrImageNeverPull` になります）。\n3. `db.env` が無ければ、ランダムなパスワードを生成して作成（値は表示しません）。既にあれば変更しません。\n4. 完了済みの migration Job を削除し、`kubectl apply -k phases/03-config-storage/kustomize/overlays/kind`。\n5. StatefulSet の準備完了待ち → migration Job の Complete 待ち → Web/API Deployment の準備完了待ち。\n\nJob を毎回削除する理由は、Job の `spec.template` は作成後に変更できないためです。ConfigMap/Secret の名前はハッシュ付きで、内容を変えると Job の参照名も変わり、そのまま `apply` すると `field is immutable` で失敗します。Alembic の `upgrade head` は何度実行しても同じ結果になるため、削除して作り直しても安全です。Job の初期化コンテナは DB が接続可能になるまで待ち、Job の失敗回数を使い切らないようにしています。\n\nスクリプトは既存のクラスター・PVC・DB を削除しません。再実行しても冪等で、タスクは残ります。\n\n期待結果は、Node が Ready、StatefulSet が 1/1、PVC が Bound、migration Job が Completed、Web/API の Deployment が各 1 Pod です。",
+              "linuxCommand": "bash tools/kind-install.sh\nbash phases/03-config-storage/scripts/up.sh"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-4",
+          "kind": "practice",
+          "title": "実習: 3. リソースと保存先を観察する",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase3` を指定します。`kind-workboard-lab`（Lab 02）に誤って操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 get nodes\nkubectl --context kind-workboard-phase3 get storageclass\nkubectl --context kind-workboard-phase3 -n workboard get pods,sts,deploy,svc,job -o wide\nkubectl --context kind-workboard-phase3 get pvc,pv -n workboard\nkubectl --context kind-workboard-phase3 -n workboard describe pvc data-workboard-postgres-0\nkubectl --context kind-workboard-phase3 -n workboard get statefulset workboard-postgres -o jsonpath='{.spec.volumeClaimTemplates[0].spec}'",
+              "expected": "StorageClass の既定（`default` の表示）、PVC の STATUS が `Bound`、PV が PVC と対応していること、PV の RECLAIM POLICY を確認します。PVC は Namespace に属し、PV はクラスター全体のオブジェクトです（`-n workboard` は PV の一覧には効きません）。マニフェストでは StorageClass を指定していないため、既定の StorageClass が使われます。PVC は StatefulSet の `volumeClaimTemplates` から Pod ごとに作られた名前（`data-workboard-postgres-0`）です。Pod の名前は `workboard-postgres-0` で、Deployment のようなランダムなサフィックスではありません。DB の Service が `CLUSTER-IP: None`（headless）であることも見ます。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-5",
+          "kind": "practice",
+          "title": "実習: 4. ConfigMap と Secret の参照を確認する",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase3` を指定します。`kind-workboard-lab`（Lab 02）に誤って操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard get configmap,secret\nkubectl --context kind-workboard-phase3 -n workboard get configmap -o yaml\nkubectl --context kind-workboard-phase3 -n workboard exec deploy/workboard-api -- printenv POSTGRES_HOST POSTGRES_DB POSTGRES_USER\nkubectl --context kind-workboard-phase3 -n workboard auth can-i get secrets\nkubectl --context kind-workboard-phase3 -n workboard auth can-i get secrets --as=system:serviceaccount:workboard:default",
+              "expected": "非機密値は ConfigMap、パスワードは Secret に分かれています。この kubeconfig の管理者は Secret を読めますが、Namespace の `default` ServiceAccount は読めないことを `can-i` で確認します。Secret を読み取れる主体・`exec` できる主体・Secret を Pod に配る方法は、Secret の保護範囲に関わります。ここではパスワードを画面に出す必要はありません。この kind クラスターに保存時暗号化を設定していないため、etcd での保存時の保護は確認の対象外（未検証）として記録してください。"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-6",
+          "kind": "practice",
+          "title": "実習: 5. ブラウザーで同じアプリを使う",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase3` を指定します。`kind-workboard-lab`（Lab 02）に誤って操作しないよう、毎回 context を確認してください。\n\n\n8081 番が使われていないことを確認し、次のコマンドを実行中のまま残してブラウザーを別に開きます。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8081:80",
+              "expected": "http://localhost:8081（http://localhost:8081） でダミータスク「永続化の学習」を作ります。別のターミナルで次の確認もできます。"
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -i http://localhost:8081/health/ready\ncurl.exe -s http://localhost:8081/api/v1/tasks",
+              "expected": "Lab 02 の 8080 はそのまま使えます。8080 は `workboard-lab`、8081 は `workboard-phase3` を指しており、データも別です。",
+              "linuxCommand": "curl -i http://localhost:8081/health/ready\ncurl -s http://localhost:8081/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-7",
+          "kind": "practice",
+          "title": "実習: 6. DB Pod を作り直してもデータが残るか",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase3` を指定します。`kind-workboard-lab`（Lab 02）に誤って操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": ". .\\phases\\03-config-storage\\scripts\\env.ps1",
+              "expected": "",
+              "linuxCommand": "source phases/03-config-storage/scripts/env.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard get pod workboard-postgres-0 -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP\nkubectl --context kind-workboard-phase3 get pvc,pv -n workboard\nkubectl --context kind-workboard-phase3 -n workboard delete pod workboard-postgres-0\nkubectl --context kind-workboard-phase3 -n workboard rollout status statefulset/workboard-postgres --timeout=180s\nkubectl --context kind-workboard-phase3 -n workboard get pod workboard-postgres-0 -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP\nkubectl --context kind-workboard-phase3 get pvc,pv -n workboard",
+              "expected": ""
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -s http://localhost:8081/api/v1/tasks",
+              "expected": "Lab 02 では DB Pod の削除でタスクとスキーマが消えました。ここでは Pod の名前と PVC の名前、削除前後の UID、タスクの有無を比較します。API Pod の readiness が一時的に失敗する場合は戻るまで待ち、port-forward が切れたら手順 5 を再実行します。",
+              "linuxCommand": "curl -s http://localhost:8081/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-8",
+          "kind": "practice",
+          "title": "実習: 7. ConfigMap の変更が Pod にどう反映されるか",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase3` を指定します。`kind-workboard-lab`（Lab 02）に誤って操作しないよう、毎回 context を確認してください。\n\n\n`phases/03-config-storage/kustomize/overlays/kind/kustomization.yaml` の `configMapGenerator` の `literals` に、アプリが読まないダミーの値 `- LAB_NOTE=v2` を追加します。保存前に、変更前の ConfigMap/Pod の状態を記録してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard get configmap\nkubectl --context kind-workboard-phase3 -n workboard get pods\nkubectl --context kind-workboard-phase3 apply -k phases/03-config-storage/kustomize/overlays/kind",
+              "expected": "`apply` は Job の参照名が変わるため、`field is immutable` で Job だけ失敗します。観察したらエラーの文面を記録し、他のリソースがどう更新されたかも確認します。"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard delete job workboard-migrate\nkubectl --context kind-workboard-phase3 apply -k phases/03-config-storage/kustomize/overlays/kind\nkubectl --context kind-workboard-phase3 -n workboard wait --for=condition=complete job/workboard-migrate --timeout=300s\nkubectl --context kind-workboard-phase3 -n workboard get configmap\nkubectl --context kind-workboard-phase3 -n workboard get pods",
+              "expected": ""
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -s http://localhost:8081/api/v1/tasks",
+              "expected": "観察する点は、ConfigMap が新しい名前で作られ旧 ConfigMap が残ること、Pod の名前・作り直し、DB の StatefulSet がどうなったか、タスクが残ること、`LAB_NOTE` が Pod の環境変数として見えるかです（`exec ... -- printenv LAB_NOTE`）。確認後、`- LAB_NOTE=v2` の行を削除して同じ手順（Job を削除してから `apply -k`）で元に戻します。参照されなくなった旧 ConfigMap は自動では消えません。",
+              "linuxCommand": "curl -s http://localhost:8081/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-9",
+          "kind": "practice",
+          "title": "実習: 8. 構築スクリプトの再実行（冪等性と migration の再実行）",
+          "body": "すべてリポジトリ直下で実行します。`-n` は Namespace、`--context` は操作対象クラスターの設定名です。この Lab の Kubernetes 操作は `kind-workboard-phase3` を指定します。`kind-workboard-lab`（Lab 02）に誤って操作しないよう、毎回 context を確認してください。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File phases/03-config-storage/scripts/up.ps1",
+              "expected": "",
+              "linuxCommand": "bash phases/03-config-storage/scripts/up.sh"
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard logs job/workboard-migrate\nkubectl --context kind-workboard-phase3 -n workboard get job workboard-migrate",
+              "expected": ""
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -s http://localhost:8081/api/v1/tasks",
+              "expected": "スクリプトは既存クラスター・PVC を再利用し、`db.env` を上書きせず、Job を作り直します。再適用時に StatefulSet が `configured` と表示されても、`kubectl -n workboard get controllerrevisions` の件数と DB Pod の AGE が変わらなければ Pod は作り直されていません。Alembic のログから、既に最新版のスキーマのため何も変更しなかったことを読み取れるか確認します。タスクは残ります。アプリのコードを変更した場合は、同じ `:kind` タグを再投入しても Pod が自動で変わらないため、Lab 02 と同様に `kubectl rollout restart deployment/workboard-api deployment/workboard-web` が別途必要です。",
+              "linuxCommand": "curl -s http://localhost:8081/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-10",
+          "kind": "practice",
+          "title": "実習: A. StatefulSet を削除しても PVC は残る",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase3` だけで、`workboard-lab` には影響しません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard delete statefulset workboard-postgres\nkubectl --context kind-workboard-phase3 get pvc,pv -n workboard\nkubectl --context kind-workboard-phase3 apply -k phases/03-config-storage/kustomize/overlays/kind\nkubectl --context kind-workboard-phase3 -n workboard rollout status statefulset/workboard-postgres --timeout=180s",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -s http://localhost:8081/api/v1/tasks",
+              "expected": "StatefulSet の削除中も PVC/PV が残るか、再作成した Pod が同じ PVC を使い、タスクが残るかを確認します。",
+              "linuxCommand": "curl -s http://localhost:8081/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-11",
+          "kind": "practice",
+          "title": "実習: B. PVC を削除するとデータはどうなるか",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase3` だけで、`workboard-lab` には影響しません。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard scale statefulset workboard-postgres --replicas=0\nkubectl --context kind-workboard-phase3 -n workboard delete pvc data-workboard-postgres-0\nkubectl --context kind-workboard-phase3 get pv",
+              "expected": ""
+            },
+            {
+              "title": "手順 2 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "powershell -NoProfile -File phases/03-config-storage/scripts/up.ps1",
+              "expected": "",
+              "linuxCommand": "bash phases/03-config-storage/scripts/up.sh"
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "curl.exe -s http://localhost:8081/api/v1/tasks",
+              "expected": "PV の RECLAIM POLICY と、PVC 削除後の PV の有無を比較します。構築スクリプトが StatefulSet を戻して新しい PVC を作り、migration Job でスキーマだけを復旧します。タスクの復元ではありません。port-forward が切れていたら手順 5 を再実行します。",
+              "linuxCommand": "curl -s http://localhost:8081/api/v1/tasks"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-12",
+          "kind": "practice",
+          "title": "実習: C. Secret の値だけを変えるとどうなるか",
+          "body": "ダミータスクを失ってよいと確認できた場合だけ実行してください。 対象は `workboard-phase3` だけで、`workboard-lab` には影響しません。\n\n\nDB のパスワードは、データ領域を最初に初期化したときの値で決まります。Secret の値を変えても、既存 DB のパスワードは変わりません。変更前に元の内容を保存し、必ず復元します。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "$secretFile = 'phases/03-config-storage/kustomize/overlays/kind/secrets/db.env'\n$original = [IO.File]::ReadAllText((Resolve-Path $secretFile))\n$utf8 = New-Object Text.UTF8Encoding $false\n[IO.File]::WriteAllText((Resolve-Path $secretFile), \"POSTGRES_PASSWORD=wrong-local-only`n\", $utf8)",
+              "expected": "",
+              "linuxCommand": "secret_file=phases/03-config-storage/kustomize/overlays/kind/secrets/db.env\noriginal=$(<\"$secret_file\")\nprintf 'POSTGRES_PASSWORD=wrong-local-only\\n' > \"$secret_file\""
+            },
+            {
+              "title": "手順 2 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kubectl --context kind-workboard-phase3 -n workboard delete job workboard-migrate\nkubectl --context kind-workboard-phase3 apply -k phases/03-config-storage/kustomize/overlays/kind\nkubectl --context kind-workboard-phase3 -n workboard get pods\nkubectl --context kind-workboard-phase3 -n workboard logs job/workboard-migrate -c migrate --tail=5",
+              "expected": "新しい API Pod と migration Job が DB にログインできるか、既存の API Pod が残る間の Service の応答はどうかを観察します。戻すときは次を実行します。"
+            },
+            {
+              "title": "手順 3 / Windows / Linux",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "[IO.File]::WriteAllText((Resolve-Path $secretFile), $original, $utf8)\npowershell -NoProfile -File phases/03-config-storage/scripts/up.ps1",
+              "expected": "PowerShell 5.1 の `Set-Content -Encoding UTF8` は BOM を付けるため、このファイルには使いません。",
+              "linuxCommand": "printf '%s\\n' \"$original\" > \"$secret_file\"\nbash phases/03-config-storage/scripts/up.sh"
+            }
+          ]
+        },
+        {
+          "id": "practice-lab-13",
+          "kind": "practice",
+          "title": "実習: 失敗時に確認すること",
+          "body": "- `kubectl kustomize` が `secrets/db.env` を読めない: ファイルがあるか。`scripts/up.ps1` で生成するか、例ファイルからコピーしたか。\n- 接続先が違う: `. .\\phases\\03-config-storage\\scripts\\env.ps1`（Bash は `source phases/03-config-storage/scripts/env.sh`）を読み込んだか。context が `kind-workboard-phase3` か。Phase 2 は `phases/02-kind-basics/scripts/` の `env.ps1` / `env.sh` を読み込む。\n- PVC が `Pending`: `kubectl get storageclass` に既定の StorageClass があるか。`describe pvc` のイベントを読む。\n- `ErrImageNeverPull`: `kind load docker-image ... --name workboard-phase3` が成功したか。\n- Job の `Init` が終わらない: DB Pod が Ready か。`logs job/workboard-migrate -c wait-for-db` と Service 名・ConfigMap の `POSTGRES_HOST` を確認する。\n- Job が `field is immutable` で更新できない: Job を削除してから `apply -k` する。\n- API が Ready にならない: `logs deployment/workboard-api` の認証エラー。`db.env` が DB を初期化した値と一致しているか。\n- Web から 502: Web の `API_HOST`（ConfigMap）と API Pod の準備状態を確認する。\n- 8081 が使えない: 他のプロセスが使用中でないか確認し、解放できる場合だけ解放する。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-14",
+          "kind": "practice",
+          "title": "実習: Linux / macOS / WSL での前提",
+          "body": "スクリプトは PowerShell 版と同じ処理の Bash 版（`phases/03-config-storage/scripts/env.sh`・`up.sh`、導入は Phase 2 と共通の `tools/kind-install.sh`）があり、上の手順の「Linux / macOS / WSL (Bash)」に従います。Bash 4 以降、Docker（WSL は Docker Desktop の WSL 統合）、kubectl 1.34〜1.36 の条件は Phase 2 の「Linux / macOS / WSL での前提」と同じです。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。"
+        },
+        {
+          "id": "practice-lab-15",
+          "kind": "practice",
+          "title": "実習: 後片付け・再構築",
+          "body": "port-forward を実行しているターミナルで `Ctrl+C` を押すと入口だけが閉じます。クラスターとアプリは動き続けます。\n\n`workboard-phase3` を削除すると、PVC/PV に保存した DB のデータも失われます。クラスター名と消えるデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。`workboard-lab` は対象外です。",
+          "callout": "手順は原本から抽出しています。閲覧だけでは実行されません。既存環境がある場合は初回構築を繰り返さず、操作対象とデータへの影響を先に確認してください。",
+          "steps": [
+            {
+              "title": "手順 1 / 共通コマンド",
+              "description": "リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
+              "command": "kind delete cluster --name workboard-phase3",
+              "expected": "削除後、専用 kubeconfig `.kube/workboard-phase3.yaml` が残っていれば対象を確認してそのファイルだけ削除します。`db.env` は残して再利用できます。クラスター（PVC）を残したまま `db.env` を消さないでください。 構築スクリプトが別のパスワードを生成し、初期化済みの DB と一致しなくなります。"
+            }
+          ]
         }
       ],
       "diagram": {
         "type": "storage",
         "title": "Pod の寿命と保存先を分離する",
-        "caption": "Phase 3 の予習です。API の管理チェーンなど、今回の焦点以外は省略しています。Node と Namespace は直交します。",
+        "caption": "Phase 3 の構成です。Web や管理チェーンなど、今回の焦点以外は省略しています。Node と Namespace は直交します。PV は kind のノード内の保存領域で、ノード喪失を含めた可用性の保証ではありません。",
         "nodes": [
           {
             "id": "api-pod",
@@ -1580,7 +1932,7 @@
             "label": "PVC",
             "resource": "kubernetes.pvc",
             "kind": "pvc",
-            "sublabel": "Namespace 内の保存先要求",
+            "sublabel": "Pod 専用の保存先要求",
             "column": 2,
             "group": "namespace",
             "namespace": "workboard"
@@ -1599,7 +1951,7 @@
             "label": "ConfigMap",
             "resource": "kubernetes.configmap",
             "kind": "configmap",
-            "sublabel": "設定値",
+            "sublabel": "非機密の設定値（ハッシュ付き名）",
             "column": 0,
             "group": "namespace",
             "namespace": "workboard"
@@ -1609,7 +1961,7 @@
             "label": "Secret",
             "resource": "kubernetes.secret",
             "kind": "secret",
-            "sublabel": "配布権限・保存時保護は別途必要",
+            "sublabel": "base64 表現。権限・保存時保護は別途必要",
             "column": 1,
             "group": "namespace",
             "namespace": "workboard"
@@ -1690,7 +2042,7 @@
           },
           {
             "id": "runtime",
-            "label": "保存先を利用する Node / 詳細は実装時に決定",
+            "label": "単一 Node / control-plane 兼 worker",
             "kind": "node",
             "parentId": "cluster"
           }
@@ -1699,7 +2051,7 @@
           {
             "id": "storage",
             "title": "保存先とスコープ",
-            "description": "予習の DB 周辺図です。StatefulSet は ReplicaSet を介しません。PVC は Namespace 内、PV と Node は cluster scope です。PV は物理ディスクそのものの絵ではありません。",
+            "description": "workboard-phase3 の DB 周辺図です。StatefulSet は ReplicaSet を介しません。PVC は Namespace 内、PV と Node は cluster scope です。PV は物理ディスクそのものの絵ではありません。",
             "nodeIds": [
               "api-pod",
               "db-service",
@@ -1717,7 +2069,7 @@
           {
             "id": "configuration",
             "title": "設定の配布",
-            "description": "予習。ConfigMap/Secret は実行中のコンテナではなく、API に保存される設定オブジェクトです。",
+            "description": "ConfigMap/Secret は実行中のコンテナではなく、API に保存される設定オブジェクトです。内容が変わると名前のハッシュが変わり、参照する Pod は置き換わります。",
             "nodeIds": [
               "config",
               "secret",
@@ -1744,7 +2096,7 @@
       "questions": [
         {
           "id": "q1",
-          "prompt": "PostgreSQL をなぜ StatefulSet にするのか？",
+          "prompt": "PostgreSQL をなぜ Deployment ではなく StatefulSet にするのか？",
           "rubric": [
             "安定した識別子とストレージを扱うStatefulSetの用途を説明する",
             "StatefulSetだけでバックアップやDBの高可用性は完成しないと説明する"
@@ -1755,33 +2107,85 @@
           "prompt": "PVC は何を守り、何を守らないのか？",
           "rubric": [
             "Podの寿命から保存先を分離すると説明する",
-            "ノード喪失・誤削除・バックアップの課題を区別する"
+            "PVC削除やreclaim policy、ノード喪失・誤削除・バックアップの課題を区別する"
           ]
         },
         {
           "id": "q3",
-          "prompt": "Kustomize の overlay は何を変え、何を生成しないのか（テンプレートエンジンとの違い）？",
+          "prompt": "Kustomize の overlay は何を変え、何を生成しないのか？ テンプレートエンジンとは何が違うか？",
           "rubric": [
             "overlayはbaseのYAMLへのパッチで環境差分を表すと説明する",
             "変数展開や条件分岐を行うテンプレートエンジンではなく、存在しないリソースを自動では作らないと説明する"
+          ]
+        },
+        {
+          "id": "q4",
+          "prompt": "Secret に値を置いただけで、何が保護され、何が保護されないのか？",
+          "rubric": [
+            "Secretはbase64で表現されるだけで暗号化ではないと説明する",
+            "読み取りやexecができる主体、RBAC、保存時の保護、配布先を含めて考える"
+          ]
+        },
+        {
+          "id": "q5",
+          "prompt": "ConfigMap/Secret の値を変更したとき、それを使う Pod はいつ新しい値を使い始めるのか？",
+          "rubric": [
+            "ConfigMap/Secretの内容変更でハッシュ付き名が変わりPodテンプレートが更新されると説明する",
+            "環境変数は起動時に決まるため、既存Podは自動で新しい値に変わらないと区別する"
           ]
         }
       ],
       "memoFields": [
         {
           "id": "m1",
-          "label": "理解した概念"
+          "label": "実行日・OS・シェル"
         },
         {
           "id": "m2",
-          "label": "想定する構成と採用理由"
+          "label": "kind / kubectl / Kubernetes バージョン"
         },
         {
           "id": "m3",
-          "label": "必要な実験と期待結果"
+          "label": "kustomize の base と overlay の出力の違い"
         },
         {
           "id": "m4",
+          "label": "ConfigMap / Secret の名前とハッシュ"
+        },
+        {
+          "id": "m5",
+          "label": "StorageClass・PVC・PV の状態"
+        },
+        {
+          "id": "m6",
+          "label": "DB Pod 再作成前後の名前・UID・PVC"
+        },
+        {
+          "id": "m7",
+          "label": "再作成後のタスクの有無"
+        },
+        {
+          "id": "m8",
+          "label": "ConfigMap 変更時の Pod と Job の挙動"
+        },
+        {
+          "id": "m9",
+          "label": "構築スクリプト再実行の結果"
+        },
+        {
+          "id": "m10",
+          "label": "故障実験 A〜C の結果"
+        },
+        {
+          "id": "m11",
+          "label": "Secret の確認で分かったこと・未検証の点"
+        },
+        {
+          "id": "m12",
+          "label": "後片付け・残したクラスター"
+        },
+        {
+          "id": "m13",
           "label": "疑問・未解決事項"
         }
       ],
@@ -1789,6 +2193,10 @@
         {
           "label": "一次設計書",
           "path": "docs/kubernetes-eks-hands-on-design.md"
+        },
+        {
+          "label": "Lab 03 原本",
+          "path": "phases/03-config-storage/README.md"
         }
       ]
     },
@@ -1826,7 +2234,7 @@
         {
           "id": "preview",
           "title": "この章は予習です",
-          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
           "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
         },
         {
@@ -2120,7 +2528,7 @@
         {
           "id": "preview",
           "title": "この章は予習です",
-          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
           "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
         },
         {
@@ -2418,7 +2826,7 @@
         {
           "id": "preview",
           "title": "この章は予習です",
-          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
           "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
         },
         {
@@ -2674,7 +3082,7 @@
         {
           "id": "preview",
           "title": "この章は予習です",
-          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
           "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
         },
         {
@@ -3030,7 +3438,7 @@
         {
           "id": "preview",
           "title": "この章は予習です",
-          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
           "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
         },
         {
@@ -3250,7 +3658,7 @@
         {
           "id": "preview",
           "title": "この章は予習です",
-          "body": "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
+          "body": "Phase 4以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。",
           "callout": "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"
         },
         {

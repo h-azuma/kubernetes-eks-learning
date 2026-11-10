@@ -33,3 +33,10 @@ export function SectionHeading({ kicker, title, description, children }: { kicke
 export const number = (index: number) => String(index).padStart(2, "0");
 export const errorMessage = (error: unknown) => error instanceof Error ? error.message : "処理できませんでした。もう一度お試しください。";
 export type Notify = (message: string, failure?: boolean) => void;
+
+export const stripInlineCode = (text: string) => text.replaceAll("`", "");
+export function InlineText({ text }: { text: string }) {
+  const parts = text.split("`");
+  const tail = parts.length % 2 === 0 ? `\`${parts.pop()}` : "";
+  return <>{parts.map((part, index) => index % 2 ? <code className="inline-code" key={index}>{part}</code> : part)}{tail}</>;
+}

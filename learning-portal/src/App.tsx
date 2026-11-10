@@ -5,7 +5,7 @@ import { HeroArt } from "./HeroArt";
 import { Concepts, Lessons, Sources } from "./Lesson";
 import { Goals, Reflection } from "./Reflection";
 import { Sidebar } from "./Sidebar";
-import { Button, errorMessage, Icon, number, SectionHeading } from "./ui";
+import { Button, errorMessage, Icon, InlineText, number, SectionHeading } from "./ui";
 import { useLearning } from "./useLearning";
 import type { Bootstrap } from "./types";
 
@@ -114,7 +114,7 @@ function LearningApp({ data }: { data: Bootstrap }) {
         <section className="hero">
           <div className="hero-copy">
             <div className="hero-eyebrow"><span className="phase-tag">PHASE {number(currentIndex)}</span><span className="hero-line" /><span>{phase.level}</span></div>
-            <h1 tabIndex={-1}>{phase.title}</h1><p className="hero-subtitle">{phase.subtitle}</p><p className="hero-summary">{phase.summary}</p>
+            <h1 tabIndex={-1}>{phase.title}</h1><p className="hero-subtitle">{phase.subtitle}</p><p className="hero-summary"><InlineText text={phase.summary} /></p>
             <div className="hero-meta"><span className="meta-item"><Icon name="clock" size={15} />約 {phase.estimatedMinutes} 分</span><span className={`badge ${phase.implemented ? "accent" : "amber"}`}>{phase.implemented ? "実環境の教材あり" : "予習 · 実環境は未実装"}</span></div>
           </div>
           <HeroArt />

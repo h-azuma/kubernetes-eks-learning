@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { DiagramText } from "./DiagramText";
 import { resourceTitle, ResourceSymbol } from "./ResourceSymbol";
+import { InlineText, stripInlineCode } from "./ui";
 import type { Diagram, DiagramGroup, DiagramNode, DiagramRelation } from "./types";
 
 const groupDescriptions: Record<DiagramGroup["kind"], string> = {
@@ -70,7 +71,7 @@ function Connections({ edges, canvasRef, selected, layoutKey }: { edges: Edge[];
       const style = relations[relation];
       return <g key={`${edge.from}-${edge.to}-${index}`}>
         <path d={route.d} fill="none" style={{ stroke: style.color }} strokeWidth="2" strokeDasharray={style.dash} markerEnd={`url(#arrow-${relation})`} data-relation={relation} className={`graph-edge${selected && (edge.from === selected || edge.to === selected) ? " is-active" : ""}`} />
-        {edge.label && <DiagramText x={route.x} y={route.y} text={edge.label} maxWidth={180} className="edge-label" textAnchor="middle" />}
+        {edge.label && <DiagramText x={route.x} y={route.y} text={stripInlineCode(edge.label)} maxWidth={180} className="edge-label" textAnchor="middle" />}
       </g>;
     })}
   </svg>;
@@ -89,7 +90,7 @@ function ResourceCard({ node, diagram, selected, changing, onSelect, management 
   return <button type="button" style={style} className={`graph-node semantic-node${selected ? " is-selected" : ""}${changing ? " is-changing" : ""}`} data-diagram-node={node.id} data-resource={node.resource || "generic"} aria-label={`${node.label} の役割を確認`} aria-pressed={selected} onClick={onSelect}>
     <div className="resource-heading"><ResourceSymbol resource={node.resource} kind={node.kind} /><div><span className="resource-type">{resourceTitle(node.resource)}</span><strong className="node-label">{node.label}</strong></div></div>
     {node.namespace && <span className="namespace-badge">namespace: {node.namespace}</span>}
-    {node.sublabel && <span className="resource-description">{node.sublabel}</span>}
+    {node.sublabel && <span className="resource-description"><InlineText text={node.sublabel} /></span>}
     {!!node.contains?.length && <div className="pod-contents">{node.contains.map((child, index) => {
       const volume = child.resource === "storage.emptydir" || child.resource === "storage.volume";
       return <div className={`contained-resource${volume ? " contained-volume" : ""}`} data-container={volume ? undefined : child.label} data-volume={volume ? child.label : undefined} key={index}>
@@ -125,7 +126,7 @@ export function SemanticDiagram({ diagram, changing }: { diagram: Diagram; chang
     const children = groups.filter(candidate => candidate.parentId === group.id && visibleGroups.has(candidate.id));
     const members = nodes.filter(node => node.group === group.id);
     return <section className={`diagram-group boundary-${group.kind}`} data-boundary={group.kind} data-group={group.id} aria-label={group.label} key={group.id}>
-      <header className="boundary-heading">{(group.kind === "node" || group.kind === "namespace") && <ResourceSymbol resource={`kubernetes.${group.kind}`} size={20} />}<strong>{group.label}</strong><span>{group.description || groupDescriptions[group.kind]}</span></header>
+      <header className="boundary-heading">{(group.kind === "node" || group.kind === "namespace") && <ResourceSymbol resource={`kubernetes.${group.kind}`} size={20} />}<strong>{group.label}</strong><span><InlineText text={group.description || groupDescriptions[group.kind]} /></span></header>
       {!!members.length && <div className="group-nodes">{members.map(node => renderNode(node, group.kind === "management"))}</div>}
       {children.map(renderGroup)}
     </section>;
@@ -146,7 +147,7 @@ export function SemanticDiagram({ diagram, changing }: { diagram: Diagram; chang
           tabsRef.current?.querySelectorAll<HTMLButtonElement>("button")[next]?.focus();
         }}>{candidate.title}</button>)}
       </div>
-      {view && <p className="view-description">{view.description}</p>}
+      {view && <p className="view-description"><InlineText text={view.description} /></p>}
     </div>}
     <div className="architecture-layout" id="diagram-panel" role={view ? "tabpanel" : undefined} aria-label={view?.title || diagram.title}>
       <div className="graph-canvas semantic-scroll">
@@ -161,7 +162,7 @@ export function SemanticDiagram({ diagram, changing }: { diagram: Diagram; chang
       <aside className="node-detail">
         <div className="eyebrow">EXPLORE THE ARCHITECTURE</div><ResourceSymbol resource={selected?.resource || "document"} size={28} />
         <h3>{selected?.label || "枠と役割を、分けて考える。"}</h3>
-        <p>{selected ? selected.description || selected.sublabel || "選択した要素の所属する枠と、矢印の関係を確認しましょう。" : hasKubernetes ? "Pod は実行の単位、その内側が container です。管理オブジェクトや Service は、それとは異なる役割を持ちます。" : "ノードを選ぶと役割を確認できます。要素ごとの記号と矢印をたどり、処理や判断の流れを見てみましょう。"}</p>
+        <p>{selected ? <InlineText text={selected.description || selected.sublabel || "選択した要素の所属する枠と、矢印の関係を確認しましょう。"} /> : hasKubernetes ? "Pod は実行の単位、その内側が container です。管理オブジェクトや Service は、それとは異なる役割を持ちます。" : "ノードを選ぶと役割を確認できます。要素ごとの記号と矢印をたどり、処理や判断の流れを見てみましょう。"}</p>
         <span className="node-kind">{selected ? resourceTitle(selected.resource) : "クリックして探索"}</span>
       </aside>
     </div>

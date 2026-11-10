@@ -229,26 +229,12 @@ Terraform: VPC / EKS / ノード / 周辺サービス
 
 ```text
 kubernetes-eks-learning/
-├── README.md                       # 全体概要、現在の進捗、学習開始手順
+├── README.md                       # 全体の入口: 目的、Phase 一覧と状態、学習ポータルの起動、学習の進め方
 ├── AGENTS.md                       # Codex 向け作業ルール（本設計書から抽出）
 ├── .gitignore
 ├── .editorconfig
 ├── .env.example
-├── docs/
-│   ├── PROJECT_DESIGN.md           # 本書（リポジトリへコピー）
-│   ├── architecture/
-│   │   ├── 01-compose.md
-│   │   ├── 02-kind.md
-│   │   └── 03-eks.md
-│   ├── adr/
-│   │   ├── README.md
-│   │   └── 0001-application-and-learning-stack.md
-│   ├── operations/
-│   │   ├── troubleshooting.md
-│   │   └── aws-cleanup.md
-│   └── comparisons/
-│       └── ecs-vs-eks.md
-├── app/
+├── app/                            # 全 Phase 共通の WorkBoard
 │   ├── web/
 │   │   ├── src/
 │   │   ├── Dockerfile
@@ -259,60 +245,81 @@ kubernetes-eks-learning/
 │       ├── tests/
 │       ├── Dockerfile
 │       └── pyproject.toml
-├── docker/
-│   └── compose.yaml
-├── kubernetes/
-│   ├── base/                        # web/api の共通 Deployment + Service
-│   │   └── kustomization.yaml
-│   ├── components/
-│   │   └── postgres-local/          # ローカル用 DB リソース
-│   └── overlays/
-│       ├── kind/
-│       │   └── kustomization.yaml
-│       └── eks/
-│           └── kustomization.yaml
-├── terraform/
-│   ├── modules/                     # 必要になった時点で追加
+├── tools/                          # 全 Phase 共通のスクリプト
+│   ├── preflight.ps1               # Windows PowerShell / WSL2 の利用を考慮
+│   ├── preflight.sh
+│   ├── kind-install.ps1
+│   ├── kind-common.ps1             # Phase 2/3 の env.ps1・up.ps1 が使う共通処理
+│   └── start-learning.ps1          # 学習ポータルの起動
+├── docs/
+│   ├── PROJECT_DESIGN.md           # 本書への入口
+│   ├── kubernetes-eks-hands-on-design.md
+│   ├── adr/                        # 全体に関わる ADR（0001, 0004, 0005, 0007）と全 ADR の一覧 README.md
+│   └── operations/
+│       └── troubleshooting.md
+├── phases/                         # Phase ごとの資材。他の Phase のディレクトリに依存しない
+│   ├── 00-foundation/
+│   │   └── README.md
+│   ├── 01-compose/
+│   │   ├── README.md               # ラボ手順（設計課題・手順・完了条件・学習メモの項目）
+│   │   ├── compose.yaml
+│   │   ├── architecture.md         # 構成図
+│   │   └── decisions/              # この Phase の ADR（課題に答えた後に読む）
+│   ├── 02-kind-basics/
+│   │   ├── README.md
+│   │   ├── cluster.yaml
+│   │   ├── manifests/
+│   │   ├── scripts/                # env.ps1, up.ps1
+│   │   ├── architecture.md
+│   │   └── decisions/
+│   ├── 03-config-storage/
+│   │   ├── README.md
+│   │   ├── cluster.yaml
+│   │   ├── kustomize/
+│   │   │   ├── base/               # web/api の共通 Deployment + Service
+│   │   │   ├── components/
+│   │   │   │   └── postgres-local/ # ローカル用 DB リソース
+│   │   │   └── overlays/
+│   │   │       └── kind/
+│   │   ├── scripts/                # env.ps1, up.ps1
+│   │   ├── architecture.md
+│   │   └── decisions/
+│   ├── 04-reliability-scaling/
+│   ├── 05-security-and-failure/
+│   ├── 06-eks-foundation/          # 構成図 architecture.md と aws-cleanup.md（削除手順）もここに置く
+│   ├── 07-aws-integration/
+│   ├── 08-devops-observability/
+│   └── 09-architecture-review/     # ecs-vs-eks.md（比較レポート）もここに置く
+├── terraform/                      # Phase 6–7 で追加
+│   ├── modules/                    # 必要になった時点で追加
 │   └── environments/
 │       └── lab/
 │           ├── main.tf
 │           ├── variables.tf
 │           ├── outputs.tf
 │           └── terraform.tfvars.example
-├── scripts/
-│   ├── preflight.ps1                # Windows PowerShell / WSL2 の利用を考慮
-│   ├── preflight.sh
-│   └── ...
-├── labs/
-│   ├── 00-repository-foundation/
-│   ├── 01-compose-basics/
-│   ├── 02-kubernetes-basics/
-│   ├── 03-configuration-storage/
-│   ├── 04-reliability-scaling/
-│   ├── 05-security-and-failure/
-│   ├── 06-eks-foundation/
-│   ├── 07-aws-integration/
-│   ├── 08-devops-observability/
-│   └── 09-architecture-review/
+├── learning-portal/                # 学習用 Web アプリ（記録は Git 管理外の .data）
 └── .github/
-    └── workflows/                   # CI ラボで追加
+    └── workflows/                  # CI ラボで追加
 ```
 
 ### 4.1 ファイルを増やす順序
 
-- **Phase 0:** README、AGENTS、Git 設定、設計書、`labs/00...`、ADR だけ。
-- **Phase 1:** `app/`、Compose、テスト、`.env.example` を追加。
-- **Phase 2–5:** `kubernetes/`、kind 用スクリプト、検証記録を追加。
+- **Phase 0:** README、AGENTS、Git 設定、設計書、`phases/00-foundation/`、`tools/preflight.*`、ADR だけ。
+- **Phase 1:** `app/`、`phases/01-compose/`（Compose、構成図）、テスト、`.env.example` を追加。
+- **Phase 2–5:** `phases/NN-*/` にマニフェスト、スクリプト、検証記録を追加。kind 共通の処理は `tools/kind-common.ps1`。
 - **Phase 6–7:** `terraform/`、AWS 構成図、コスト・削除手順を追加。
 - **Phase 8–9:** CI/CD、監視、比較レポートを追加。
 
 **注意:** 上のツリーは完成後の目標構成。Phase 0 時点では空フォルダや大量の TODO だけのファイルを無理に作らない。
 
+**Phase ディレクトリの規則:** 新しい Phase の資材は `phases/NN-xxx/` に作り、他の Phase のディレクトリを参照しない（共通で使うのは `app/` と `tools/` だけ）。個人の記録（観察・設計課題への回答）は README に書かず学習ポータルに保存する。Phase 別 ADR は `phases/NN-xxx/decisions/` に提案として置き、全体に関わる ADR だけ `docs/adr/` に置く。理由は [ADR-0007](adr/0007-phase-directory-layout.md)。
+
 ---
 
 ## 5. 各ラボの共通テンプレート
 
-各 `labs/NN-.../README.md` に最低限次を記述する。
+各 `phases/NN-.../README.md` に最低限次を記述する。
 
 ```markdown
 # Lab NN: [タイトル]
@@ -345,7 +352,7 @@ kubernetes-eks-learning/
 - [ ] 結果の記録
 
 ## 学習メモ
-- 実際の観察、疑問、未解決事項、参照した公式資料
+- 記録する項目の一覧（値は書かない）。観察・疑問・未解決事項・設計課題への回答は学習ポータルに入力する
 ```
 
 ### 5.1 評価方法
@@ -369,9 +376,9 @@ kubernetes-eks-learning/
 
 - `README.md`、`AGENTS.md`、`.gitignore`、`.editorconfig` を作成。
 - 本設計書を `docs/PROJECT_DESIGN.md` に配置。
-- `labs/00-repository-foundation/README.md` をテンプレートに従って作成。
+- `phases/00-foundation/README.md` をテンプレートに従って作成。
 - `docs/adr/0001-application-and-learning-stack.md` に技術選定理由を記録。
-- `scripts/preflight.ps1` と `scripts/preflight.sh` を実装し、Git、Docker、Docker Compose、kubectl、kind、Python、Node.js、AWS CLI、Terraform の導入有無・バージョンを**参照のみで**表示する。未導入ツールがあっても Phase 0 は完了可能とする。
+- `tools/preflight.ps1` と `tools/preflight.sh` を実装し、Git、Docker、Docker Compose、kubectl、kind、Python、Node.js、AWS CLI、Terraform の導入有無・バージョンを**参照のみで**表示する。未導入ツールがあっても Phase 0 は完了可能とする。
 - 利用 OS が Windows の場合は PowerShell と WSL2/Docker Desktop の実行経路を README に示す。環境未確認のコマンドは「要確認」とする。
 
 **Done:** リポジトリを clone して目的・学習順序が理解でき、preflight の結果が読める。アプリや AWS はまだ作らない。
@@ -384,7 +391,7 @@ kubernetes-eks-learning/
 
 **検証:**
 
-- `docker compose -f docker/compose.yaml up --build -d` で起動できる（パスはリポジトリ直下からの実行を想定）。
+- `docker compose -f phases/01-compose/compose.yaml up --build -d` で起動できる（パスはリポジトリ直下からの実行を想定）。
 - `http://localhost:8080` にアクセスし、タスク作成・一覧・更新・削除ができる。
 - ブラウザ再読み込み、API コンテナ再起動後にデータが残る。
 - DB の volume を**意図的に**消すとデータが消えることを別実験で確認する（削除前の明示確認が必要）。
@@ -420,7 +427,7 @@ kubernetes-eks-learning/
 
 **検証:**
 
-- `kubectl kustomize kubernetes/overlays/kind` の結果を確認できる。
+- `kubectl kustomize phases/03-config-storage/kustomize/overlays/kind` の結果を確認できる。
 - DB Pod の再作成後もデータが残ることを確認。
 - `kubectl get pvc,pv -n workboard` でバインドを確認。
 - ローカルのダミー秘密情報だけを使い、実パスワードはリポジトリに含まれない。
@@ -623,9 +630,9 @@ Phase 0 のスクリプトで以下をチェックする。**この文書内の�
 要求事項:
 1. README.md と AGENTS.md を作成してください。
 2. .gitignore と .editorconfig を整備してください。
-3. labs/00-repository-foundation/README.md を作成してください。
+3. phases/00-foundation/README.md を作成してください。
 4. docs/adr/0001-application-and-learning-stack.md を作成してください。
-5. 環境を確認する scripts/preflight.ps1 と preflight.sh を作成してください。
+5. 環境を確認する tools/preflight.ps1 と preflight.sh を作成してください。
 6. 実行可能な範囲でスクリプトの検証を行ってください。
 7. 変更内容、検証結果、未検証事項、次にユーザーが実施するコマンドを報告してください。
 
@@ -646,8 +653,8 @@ Phase 0 の成果物と docs/PROJECT_DESIGN.md を読み、
 Phase 1（Docker Compose と WorkBoard MVP）のみ実装してください。
 
 最初に今回学ぶ概念と構成図、設計判断（なぜこの実装か）を説明してください。
-次に app/web、app/api、docker/compose.yaml、テスト、
-labs/01-compose-basics/README.md を実装してください。
+次に app/web、app/api、phases/01-compose/compose.yaml、テスト、
+phases/01-compose/README.md を実装してください。
 
 CRUD とヘルスチェックは設計書の API 仕様に従ってください。
 Docker が利用可能なら起動・API テストを実施し、結果を提示してください。

@@ -45,7 +45,7 @@ export type Phase = {
     title: string;
     body: string;
     callout?: string;
-    steps?: { title: string; description: string; command?: string; expected?: string }[];
+    steps?: { title: string; description: string; command?: string; linuxCommand?: string; expected?: string }[];
   }[];
   diagram: Diagram;
   questions: { id: string; prompt: string; rubric: string[] }[];
@@ -71,8 +71,9 @@ export type PhaseProgress = {
   feedback: Feedback | null;
   imported?: boolean;
 };
+export type AiProvider = { id: string; label: string; available: boolean; message: string };
 export type Bootstrap = {
   curriculum: { title: string; phases: Phase[] };
   progress: Record<string, PhaseProgress>;
-  ai: { available: boolean; provider: "codex"; message: string };
+  ai: { providers: AiProvider[] };
 };

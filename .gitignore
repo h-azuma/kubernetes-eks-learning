@@ -8,6 +8,7 @@
 .kube/
 learning-portal/.data/
 credentials.json
+phases/03-config-storage/kustomize/overlays/kind/secrets/db.env
 *-credentials.json
 service-account*.json
 *.pem

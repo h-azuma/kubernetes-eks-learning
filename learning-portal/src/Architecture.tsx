@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "./ui";
+import { Button, InlineText } from "./ui";
 import type { Diagram } from "./types";
 import { SemanticDiagram } from "./SemanticDiagram";
 
@@ -52,7 +52,7 @@ export function Architecture({ diagram }: { diagram: Diagram }) {
     <div className="card architecture-card">
       <div className="card-topline"><h3>{diagram.title}</h3><span className="diagram-label">INTERACTIVE DIAGRAM</span></div>
       <SemanticDiagram diagram={diagram} changing={changing} />
-      <p className="graph-caption">{diagram.caption}</p>
+      <p className="graph-caption"><InlineText text={diagram.caption} /></p>
     </div>
     {["compose", "kubernetes", "storage"].includes(diagram.type) && <Simulator diagram={diagram} highlight={highlight} />}
   </>;

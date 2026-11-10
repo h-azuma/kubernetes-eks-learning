@@ -1,8 +1,8 @@
 ﻿#Requires -Version 5.1
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot/kind-env.ps1"
+. "$PSScriptRoot/kind-common.ps1"
 if (-not [Environment]::Is64BitProcess -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
-    throw 'このスクリプトは Windows x64 用です。他の OS/CPU は Lab 02 の手動手順を使ってください。'
+    throw 'このスクリプトは Windows x64 用です。他の OS/CPU は Phase 2 の手動手順を使ってください。'
 }
 New-Item -ItemType Directory -Force $ToolsDirectory | Out-Null
 $kindPath = Join-Path $ToolsDirectory 'kind.exe'
@@ -26,4 +26,4 @@ if ($expected -notmatch '^[0-9a-fA-F]{64}$' -or (Get-FileHash $downloadPath -Alg
 }
 Move-Item -LiteralPath $downloadPath -Destination $kindPath
 Invoke-Checked $kindPath @('version')
-Write-Output 'この PowerShell で kind を使うには . ./scripts/kind-env.ps1 を実行してください。'
+Write-Output 'この PowerShell で kind を使うには . ./phases/02-kind-basics/scripts/env.ps1 を実行してください。'

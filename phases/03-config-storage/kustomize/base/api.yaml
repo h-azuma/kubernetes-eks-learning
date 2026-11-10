@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workboard-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workboard-api
+  template:
+    metadata:
+      labels:
+        app: workboard-api
+    spec:
+      containers:
+        - name: api
+          image: workboard-api
+          envFrom:
+            - configMapRef:
+                name: workboard-config
+            - secretRef:
+                name: workboard-db
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workboard-api
+spec:
+  type: ClusterIP
+  selector:
+    app: workboard-api
+  ports:
+    - port: 8000
+      targetPort: 8000

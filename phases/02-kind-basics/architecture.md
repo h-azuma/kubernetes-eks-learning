@@ -43,4 +43,4 @@ Phase 2 はダミーデータ専用です。Compose の `.env`・DB・volume か
 
 ## クラスターの選択
 
-操作には専用 `.kube/workboard-kind.yaml` と `--context kind-workboard-lab` を使います。Windows では `scripts/kind-env.ps1` を現在の PowerShell に読み込むと、専用 kubeconfig と `.tools` の kind がこのシェルだけで有効になります。ユーザーの標準 kubeconfig やシステム PATH は書き換えません。
+操作には専用 `.kube/workboard-kind.yaml` と `--context kind-workboard-lab` を使います。Windows では `scripts/env.ps1` を現在の PowerShell に読み込むと、専用 kubeconfig と `.tools` の kind がこのシェルだけで有効になります。ユーザーの標準 kubeconfig やシステム PATH は書き換えません。

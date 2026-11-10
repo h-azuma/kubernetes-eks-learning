@@ -31,3 +31,11 @@ React の依存が増える一方、画面の状態と描画を同じコンポ�
 - [既存プロジェクトへの React 導入](https://react.dev/learn/add-react-to-an-existing-project)
 - [React のバージョン方針・公開版](https://react.dev/versions)
 - 実際の固定バージョンは `learning-portal/package.json` と lock ファイルを参照する。
+
+## 追記: AI 採点に Claude Code CLI を追加（2026-11-10）
+
+- 判断: 採点は Codex CLI 固定だったが、Claude Code CLI も選択できるようにする。共通処理（同時1件のロック、タイムアウト、一時フォルダー、標準入力、出力検証）は基底クラスに集約し、CLI の発見・可否判定・コマンド・結果の取り出しだけをプロバイダーごとに持つ。API は `ai.providers` と `/grade` の `provider` に変更した。画面と同時に更新するため後方互換は持たない。
+- 理由: ユーザーが利用中のサブスクリプションを選べるようにするため。API キー不要の方針は維持する。
+- 代替案: Anthropic API を直接呼ぶ（API キー管理が必要で、既存方針に反する）。`--bare` で設定を完全に切る（claude.ai ログインでは使えない）。
+- 影響: Claude ではグローバルの `CLAUDE.md` 等が読み込まれ得るが、ツール・MCP・スラッシュコマンドは無効で、`--restricted` によりユーザー/プロジェクト設定は無視される。保存済みの `provider: "codex"` の採点結果はそのまま表示できる。
+- 根拠: `claude --help`（2.1.321）と実 CLI での架空回答1問の疎通確認。

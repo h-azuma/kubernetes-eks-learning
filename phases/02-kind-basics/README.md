@@ -9,7 +9,7 @@
 
 ## 前提条件
 
-Lab 01 完了、Docker Desktop の Linux コンテナエンジン、kubectl 1.34〜1.36、kind v0.33.0。今回のノードは Kubernetes v1.35.8 です。Docker にローカルノード1台を動かす CPU・メモリ・ディスクの空きが必要です。初回はイメージをダウンロードしますが AWS 費用はありません。
+Lab 01 完了、Linux コンテナエンジンが動く Docker（Windows / macOS は Docker Desktop、Linux は Docker Engine または Docker Desktop）、kubectl 1.34〜1.36、kind v0.33.0。今回のノードは Kubernetes v1.35.8 です。Docker にローカルノード1台を動かす CPU・メモリ・ディスクの空きが必要です。初回はイメージをダウンロードしますが AWS 費用はありません。
 
 この DB はダミーデータ専用です。Compose の DB/volume/.env を使わず、Pod を削除するとデータは消えます。Phase 3 で永続化を導入します。
 
@@ -23,10 +23,10 @@ Lab 01 完了、Docker Desktop の Linux コンテナエンジン、kubectl 1.34
 
 ## 実装タスク
 
-1. [構成図と Compose との比較](../../docs/architecture/02-kind.md)、[ADR-0003](../../docs/adr/0003-kind-minimal-workloads.md) を読む。
+1. [構成図と Compose との比較](architecture.md)、[ADR-0003](decisions/0003-kind-minimal-workloads.md) を読む。
 2. 専用 kind を用意し、クラスターに同じ WorkBoard イメージを投入する。
 3. Namespace・DB・migration Job・Web/API を適用し、状態と通信先を観察する。
-4. Pod を置き換え、以下の **「学習メモ」** に結果を直接記入する。
+4. Pod を置き換え、結果を **学習ポータルの学習メモ**（項目は「学習メモ」節）に記録する。
 
 ## 検証コマンド・期待結果
 
@@ -34,14 +34,23 @@ Lab 01 完了、Docker Desktop の Linux コンテナエンジン、kubectl 1.34
 
 ### 1. ツール導入とクラスター構築
 
-Windows PowerShell 5.1 以降で初回だけ実行します。
+初回だけ実行します。Windows は PowerShell 5.1 以降、Linux / macOS / WSL は Bash（Linux 側の条件は「Linux / macOS / WSL での前提」を参照）で行います。PowerShell と Bash は同じ処理をするスクリプトです。
+
+**Windows (PowerShell):**
 
 ```powershell
-powershell -NoProfile -File scripts/kind-install.ps1
-powershell -NoProfile -File scripts/kind-up.ps1
+powershell -NoProfile -File tools/kind-install.ps1
+powershell -NoProfile -File phases/02-kind-basics/scripts/up.ps1
 ```
 
-installer は公式 kind を取得し SHA-256 を検証して `.tools/kind.exe` に置きます。管理者権限や永続的な PATH 変更は不要です。構築スクリプトは Docker・kubectl の対応を確認し、専用 kubeconfig `.kube/workboard-kind.yaml` を作ります。既存クラスター・DB の削除はしません。同名クラスターだけあり、専用 kubeconfig がない場合は確認のため停止します。
+**Linux / macOS / WSL (Bash):**
+
+```bash
+bash tools/kind-install.sh
+bash phases/02-kind-basics/scripts/up.sh
+```
+
+installer は公式 kind を取得し SHA-256 を検証して、Windows では `.tools/kind.exe`、Linux では `.tools/kind` に置きます。管理者権限や永続的な PATH 変更は不要です。構築スクリプトは Docker・kubectl の対応を確認し、専用 kubeconfig `.kube/workboard-kind.yaml` を作ります。既存クラスター・DB の削除はしません。同名クラスターだけあり、専用 kubeconfig がない場合は確認のため停止します。
 
 起動処理は以下の順です。固定秒数の sleep ではなく、実際の状態を待ちます。
 
@@ -54,22 +63,33 @@ installer は公式 kind を取得し SHA-256 を検証して `.tools/kind.exe` 
 
 期待結果は Node が Ready、Deployment が各1 Pod、migration Job が Completed です。イメージ投入はホストの Docker と kind ノードのイメージ保存先が別であるため必要です。API/Web は `imagePullPolicy: Never` なので投入忘れは `ErrImageNeverPull` になります。PostgreSQL は `IfNotPresent` でノードが公式レジストリから取得します。ローカル学習用ビルドは `--provenance=false` とし、複数 platform・attestation の manifest をノードへ持ち込む問題を避けます。
 
-### 2. 現在の PowerShell で対象を選び、状態を観察する
+### 2. 現在のシェルで対象を選び、状態を観察する
 
-**構築済みのこの作業環境では、まずここから進めてください。** 新しい PowerShell を開くたびに最初の行を実行します。先頭のドットとスペースは、設定を今のシェルへ読み込む指定です。
+**構築済みのこの作業環境では、まずここから進めてください。** 新しいターミナルを開くたびに最初の行を実行します。PowerShell の先頭のドットとスペース、Bash の `source` は、設定を今のシェルへ読み込む指定です（Bash の `env.sh` は実行ではなく `source` で使います）。
+
+**Windows (PowerShell):**
 
 ```powershell
-. .\scripts\kind-env.ps1
+. .\phases\02-kind-basics\scripts\env.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+source phases/02-kind-basics/scripts/env.sh
+```
+
+```text
 kubectl --context kind-workboard-lab get nodes
 kubectl --context kind-workboard-lab -n workboard get pods,rs,deploy,svc
 kubectl --context kind-workboard-lab -n workboard get pods --show-labels
 ```
 
-`kind-env.ps1` は今のシェルだけに `.tools` と専用 KUBECONFIG を設定します。標準 kubeconfig やシステム PATH は変更しません。Compose 用コンテナはこの一覧には出ません。
+`scripts/env.ps1`（Bash は `env.sh`）は今のシェルだけに `.tools` と専用 KUBECONFIG を設定します。標準 kubeconfig やシステム PATH は変更しません。Compose 用コンテナはこの一覧には出ません。
 
 API の所有関係も調べます。
 
-```powershell
+```text
 kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o wide
 kubectl --context kind-workboard-lab -n workboard get rs -l app=workboard-api -o wide
 kubectl --context kind-workboard-lab -n workboard describe deployment workboard-api
@@ -83,7 +103,7 @@ Deployment → ReplicaSet → Pod の順に管理されます。Service の sele
 
 8080 番を Compose 等で使っていないことを確認します。次のコマンドは実行中のまま残し、ブラウザーを別に開きます。
 
-```powershell
+```text
 kubectl --context kind-workboard-lab -n workboard port-forward --address 127.0.0.1 svc/workboard-web 8080:80
 ```
 
@@ -91,21 +111,41 @@ kubectl --context kind-workboard-lab -n workboard port-forward --address 127.0.0
 
 Service を指定した port-forward は、selector から選ばれた Web Pod へトンネルします。ClusterIP 自体を外部公開する操作ではありません。Web から API への通信では実際に ClusterIP Service を使います。
 
-他の PowerShell で以下を実行すれば health も確認できます。
+別のターミナルで以下を実行すれば health も確認できます。
+
+**Windows (PowerShell):**
 
 ```powershell
 curl.exe -i http://localhost:8080/health/live
 curl.exe -i http://localhost:8080/health/ready
 ```
 
+**Linux / macOS / WSL (Bash):**
+
+```bash
+curl -i http://localhost:8080/health/live
+curl -i http://localhost:8080/health/ready
+```
+
 どちらも200が期待結果です。port-forward は永続的な公開設定ではなく、コマンドを止めると接続できなくなります。
 
 ### 4. API Pod を削除し、自動復旧を観察する
 
-別の PowerShell で専用設定を読み込み、現在の Pod の名前・UID・IP を記録します。
+別のターミナルで専用設定を読み込み、現在の Pod の名前・UID・IP を記録します。
+
+**Windows (PowerShell):**
 
 ```powershell
-. .\scripts\kind-env.ps1
+. .\phases\02-kind-basics\scripts\env.ps1
+```
+
+**Linux / macOS / WSL (Bash):**
+
+```bash
+source phases/02-kind-basics/scripts/env.sh
+```
+
+```text
 kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api -o custom-columns=NAME:.metadata.name,UID:.metadata.uid,IP:.status.podIP
 kubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-api
 kubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-api --timeout=180s
@@ -116,15 +156,15 @@ kubectl --context kind-workboard-lab -n workboard get pods -l app=workboard-api 
 
 ### 5. マニフェストを再適用する
 
-```powershell
-kubectl --context kind-workboard-lab apply -f kubernetes/kind/namespace.yaml -f kubernetes/kind/postgres.yaml -f kubernetes/kind/migrate.yaml -f kubernetes/kind/app.yaml
+```text
+kubectl --context kind-workboard-lab apply -f phases/02-kind-basics/manifests/namespace.yaml -f phases/02-kind-basics/manifests/postgres.yaml -f phases/02-kind-basics/manifests/migrate.yaml -f phases/02-kind-basics/manifests/app.yaml
 ```
 
 定義を変更していなければ基本的に `unchanged` です。再適用だけで毎回新しい Pod が作られるわけではありません。完了済み migration Job も再実行されません。
 
 アプリコードを変更して構築スクリプトを再実行した場合は、同じ `:kind` タグを使うため、以下で新しいイメージから Pod を作り直します。
 
-```powershell
+```text
 kubectl --context kind-workboard-lab -n workboard rollout restart deployment/workboard-api deployment/workboard-web
 ```
 
@@ -134,7 +174,7 @@ Web Pod を置き換えると port-forward の接続も終了することがあ�
 
 **このラボで作ったダミータスクを失ってよいと確認できた場合だけ実行してください。** 次の DB Pod 削除はタスクとスキーマを消します。Compose の DB/volume には影響しません。
 
-```powershell
+```text
 kubectl --context kind-workboard-lab -n workboard delete pod -l app=workboard-postgres
 kubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-postgres --timeout=180s
 ```
@@ -143,9 +183,9 @@ DB は新しい emptyDir で起動します。既存の migration Job は完了�
 
 スキーマを戻すには Job だけを削除して再適用します。
 
-```powershell
+```text
 kubectl --context kind-workboard-lab -n workboard delete job workboard-migrate
-kubectl --context kind-workboard-lab apply -f kubernetes/kind/migrate.yaml
+kubectl --context kind-workboard-lab apply -f phases/02-kind-basics/manifests/migrate.yaml
 kubectl --context kind-workboard-lab -n workboard wait --for=condition=complete job/workboard-migrate --timeout=180s
 ```
 
@@ -153,7 +193,7 @@ kubectl --context kind-workboard-lab -n workboard wait --for=condition=complete 
 
 ## 失敗時に確認すること
 
-- `kind` が見つからない: installer の後、この PowerShell で `kind-env.ps1` を読み込んだか。
+- `kind` が見つからない: installer の後、このシェルで `scripts/env.ps1`（Bash は `source .../env.sh`）を読み込んだか。
 - 接続先がない/証明書エラー: 専用 KUBECONFIG と context を使っているか。他のクラスターへ切り替えて試さない。
 - `ErrImageNeverPull`: `kind load docker-image ... --name workboard-lab` が成功したか。
 - Job が失敗: `kubectl --context kind-workboard-lab -n workboard logs job/workboard-migrate` と DB の状態を確認。
@@ -161,36 +201,23 @@ kubectl --context kind-workboard-lab -n workboard wait --for=condition=complete 
 - Service から接続できない: selector・label・EndpointSlice、readiness、アプリの待受ポートを確認。
 - Web から502: Nginx の接続先と DNS、API の準備状態を確認。Compose の Docker DNS アドレスを kind で固定しない。
 
-## Linux / macOS / WSL での再現
+## Linux / macOS / WSL での前提
 
-Windows 用スクリプトは使わず、公式 release の OS/CPU に合う kind v0.33.0 と `.sha256sum` を取得・照合し、実行可能にして `.tools/kind` に置きます。[公式導入手順](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) に従ってください。kubectl は1.34〜1.36を使います。
+スクリプトは PowerShell 版と同じ処理の Bash 版（`tools/kind-install.sh`、`phases/02-kind-basics/scripts/env.sh`・`up.sh`）があり、上の手順の「Linux / macOS / WSL (Bash)」に従います。
 
-```bash
-export PATH="$PWD/.tools:$PATH"
-export KUBECONFIG="$PWD/.kube/workboard-kind.yaml"
-mkdir -p .kube
-kind create cluster --name workboard-lab --config kubernetes/kind/cluster.yaml --kubeconfig "$KUBECONFIG" --wait 180s
-docker build --provenance=false --target runtime -t workboard-api:kind app/api
-docker build --provenance=false -t workboard-web:kind app/web
-kind load docker-image workboard-api:kind workboard-web:kind --name workboard-lab
-kubectl --context kind-workboard-lab apply -f kubernetes/kind/namespace.yaml -f kubernetes/kind/postgres.yaml
-kubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-postgres --timeout=180s
-kubectl --context kind-workboard-lab apply -f kubernetes/kind/migrate.yaml
-kubectl --context kind-workboard-lab -n workboard wait --for=condition=complete job/workboard-migrate --timeout=180s
-kubectl --context kind-workboard-lab apply -f kubernetes/kind/app.yaml
-kubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-api --timeout=180s
-kubectl --context kind-workboard-lab -n workboard rollout status deployment/workboard-web --timeout=180s
-```
-
-初回構築用です。同名クラスターがある場合は作成を繰り返さず、対象と kubeconfig を確認します。以後の kubectl 操作は上の手順と共通です。Bash の HTTP 確認には `curl.exe` の代わりに `curl` を使います。
+- Bash 4 以降が必要です。macOS 標準の bash 3.2 は対象外で、Homebrew などで新しい bash を入れてください。`kind-install.sh` は Linux（x86_64 / arm64）用です。macOS では [公式導入手順](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) で kind v0.33.0 を入れ、`.tools/` に置くか PATH に通します。
+- Docker は Linux コンテナエンジンを起動しておき、実行ユーザーが `docker` を sudo なしで使えるようにします。WSL では Docker Desktop の WSL 統合を有効にし、WSL 内で `docker info` が成功することを確認します。
+- kubectl は 1.34〜1.36 を [公式手順](https://kubernetes.io/docs/tasks/tools/) で導入します。スクリプトは kubectl を導入しません。
+- `.tools/kind`（Linux）と `.tools/kind.exe`（Windows）は同じ `.tools/` に共存できます。同じ作業ツリーを Windows と WSL で共有する場合も、クラスター名・kubeconfig・ポートは共通です。
+- 外部コマンドは `docker`、`kind`、`kubectl`、`curl`、`sha256sum` だけです。
 
 ## 後片付け・再構築
 
-port-forward の PowerShell で `Ctrl+C` を押すとブラウザーの入口を閉じます。これはクラスターの停止ではなく、Node とアプリは動き続けます。
+port-forward を実行しているターミナルで `Ctrl+C` を押すとブラウザーの入口を閉じます。これはクラスターの停止ではなく、Node とアプリは動き続けます。
 
 kind クラスターを削除すると今回の DB データも失います。クラスター名と消失するデータを確認し、削除してよいと明示的に判断した場合だけ以下を使います。
 
-```powershell
+```text
 kind delete cluster --name workboard-lab
 ```
 
@@ -208,40 +235,30 @@ kind delete cluster --name workboard-lab
 
 ## 学習メモ
 
-この表の `未記録` を自分の結果に置き換えます。実行していない実験は「省略」と理由を書きます。
+観察結果と設計課題への回答は、この README ではなく**学習ポータルに入力します**（各自の PC の Git 管理外 `learning-portal/.data` にだけ保存され、リポジトリには残りません）。実行していない実験は「省略」と理由を書きます。記録する項目は次のとおりです。
 
-| 項目 | 観察・結果 |
-| --- | --- |
-| 実行日・OS・シェル | 未記録 |
-| kind / kubectl / Kubernetes バージョン | 未記録 |
-| Node・Deployment・ReplicaSet・Pod の状態 | 未記録 |
-| Service の selector と Pod label | 未記録 |
-| 画面の CRUD・絞り込み・再読込 | 未記録 |
-| API Pod 削除前後の名前・UID・IP | 未記録 |
-| API Pod 削除後の Service とデータ | 未記録 |
-| マニフェスト再適用 | 未記録 |
-| DB 再作成と migration 再実行 | 未記録 |
-| Compose との責任範囲の違い | 未記録 |
-| 後片付け・残したクラスター | 未記録 |
-| 疑問・未解決事項 | 未記録 |
-
-### 設計課題への回答
-
-1. Pod と Deployment の違い:
-2. Service を使う理由:
-3. selector と label が不一致の場合:
-4. API Pod / DB Pod の削除とデータ:
-5. 稼働後の状態を維持する主体:
+- 実行日・OS・シェル
+- kind / kubectl / Kubernetes バージョン
+- Node・Deployment・ReplicaSet・Pod の状態
+- Service の selector と Pod label
+- 画面の CRUD・絞り込み・再読込
+- API Pod 削除前後の名前・UID・IP
+- API Pod 削除後の Service とデータ
+- マニフェスト再適用
+- DB 再作成と migration 再実行
+- Compose との責任範囲の違い
+- 後片付け・残したクラスター
+- 疑問・未解決事項
 
 ## 実装時の検証記録
 
-2026-11-08、Windows PowerShell 5.1、Docker Desktop の Linux エンジンで実装担当が確認しました。上の学習メモは学習者自身の記録欄です。
+2026-11-08、Windows PowerShell 5.1、Docker Desktop の Linux エンジンで実装担当が確認しました。学習者自身の記録は README ではなく学習ポータルに残します。
 
 | 確認・コマンド | 結果 |
 | --- | --- |
-| `scripts/kind-install.ps1` | 公式 kind v0.33.0 を SHA-256 照合後に `.tools/kind.exe` へ導入 |
+| `tools/kind-install.ps1` | 公式 kind v0.33.0 を SHA-256 照合後に `.tools/kind.exe` へ導入 |
 | PowerShell 3スクリプトの構文解析 | エラーなし、PowerShell 5.1 用 UTF-8 BOM を確認 |
-| `scripts/kind-up.ps1` | Node v1.35.8 が Ready、全 Deployment が 1/1、migration が Completed |
+| `phases/02-kind-basics/scripts/up.ps1` | Node v1.35.8 が Ready、全 Deployment が 1/1、migration が Completed |
 | 既存 kubectl | v1.34.1。サーバーとの minor 差1 |
 | 構築スクリプトの再実行 | 終了コード0。既存クラスター・Pod・DB を維持し、定義は unchanged |
 | 所有関係と通信先 | API Pod → ReplicaSet → Deployment、Service selector・Pod label・EndpointSlice の対応を確認 |
@@ -256,4 +273,4 @@ kind delete cluster --name workboard-lab
 
 初回はホストの PostgreSQL マルチプラットフォーム manifest を `kind load` した際、未取得 digest により失敗しました。最終構成では API/Web だけを `--provenance=false` でビルドして投入し、PostgreSQL はノードが取得します。この修正後、クラスターを削除せず同じ構築スクリプトを再実行して成功しました。
 
-Linux/macOS/WSL ホストでの実行と、クラスター全削除後の再構築は未実施です。既存 Compose のタスクは移行・削除していません。PVC・StatefulSet・ConfigMap/Secret・Ingress・AWS は今回追加していません。
+2026-11-10、WSL2 Ubuntu（Docker Desktop の WSL 統合）で `tools/kind-install.sh` と `phases/02-kind-basics/scripts/up.sh` を確認しました（クラスター新規作成、Node Ready、全 Deployment 1/1、migration Job Complete、再実行も成功）。ネイティブ Linux、macOS、Docker Engine 単独での実行は未実施です。クラスター全削除後の再構築は Windows では未実施です。既存 Compose のタスクは移行・削除していません。PVC・StatefulSet・ConfigMap/Secret・Ingress・AWS は今回追加していません。

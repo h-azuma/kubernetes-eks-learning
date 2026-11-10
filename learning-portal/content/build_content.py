@@ -7,10 +7,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DESIGN = "docs/kubernetes-eks-hands-on-design.md"
 LABS = [
-    "labs/00-repository-foundation/README.md",
-    "labs/01-compose-basics/README.md",
-    "labs/02-kubernetes-basics/README.md",
+    "phases/00-foundation/README.md",
+    "phases/01-compose/README.md",
+    "phases/02-kind-basics/README.md",
+    "phases/03-config-storage/README.md",
 ]
+IMPLEMENTED = len(LABS)
 
 
 def read(path):
@@ -29,8 +31,7 @@ def lab_questions(text):
 
 
 def memo_labels(text):
-    rows = re.findall(r"^\| ([^|]+) \|[^\n]*$", heading_body(text, "学習メモ"), re.M)
-    return [label.strip() for label in rows if label.strip() not in {"項目", "---"}]
+    return [label.strip() for label in re.findall(r"^- (.+)$", heading_body(text, "学習メモ"), re.M)]
 
 
 def command_from(text, prefix):
@@ -41,10 +42,13 @@ def command_from(text, prefix):
     raise ValueError(f"ラボ内にコマンドがありません: {prefix}")
 
 
+SHELL_LABEL = re.compile(r"^\*\*(?:Windows \(PowerShell\)|Linux / macOS / WSL \(Bash\)):\*\*[ \t]*$", re.M)
+
+
 def plain_text(markdown):
-    """手順説明の装飾だけを除き、URLと安全条件を残す。"""
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1（\2）", markdown)
-    return text.replace("**", "").replace("`", "").strip()
+    """手順説明の装飾だけを除き、URLと安全条件を残す。シェル切替の見出しは画面のタブで示す。"""
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1（\2）", SHELL_LABEL.sub("", markdown))
+    return text.replace("**", "").strip()
 
 
 def practice_sections(text, prefix, allowed_headings):
@@ -66,16 +70,27 @@ def practice_sections(text, prefix, allowed_headings):
             blocks = list(re.finditer(r"```([^\n]*)\n(.*?)```", subcontent, re.S))
             body = plain_text(subcontent[:blocks[0].start()] if blocks else subcontent)
             steps = []
-            for index, block in enumerate(blocks):
-                next_start = blocks[index + 1].start() if index + 1 < len(blocks) else len(subcontent)
-                after = plain_text(subcontent[block.end():next_start])
-                language = {"powershell": "PowerShell", "bash": "Bash", "text": "共通コマンド"}.get(block.group(1).strip(), "コマンド")
-                steps.append(dict(
-                    title=f"手順 {index + 1} / {language}",
+            index = 0
+            while index < len(blocks):
+                block = blocks[index]
+                language = block.group(1).strip()
+                pair = None
+                if language == "powershell" and index + 1 < len(blocks) and blocks[index + 1].group(1).strip() == "bash":
+                    between = plain_text(subcontent[block.end():blocks[index + 1].start()])
+                    pair = blocks[index + 1] if not between else None
+                last = pair or block
+                next_start = blocks[index + (2 if pair else 1)].start() if index + (2 if pair else 1) < len(blocks) else len(subcontent)
+                label = "Windows / Linux" if pair else {"powershell": "PowerShell", "bash": "Bash", "text": "共通コマンド"}.get(language, "コマンド")
+                item = dict(
+                    title=f"手順 {len(steps) + 1} / {label}",
                     description="リポジトリ直下で、説明と実行条件を確認してから手動実行してください。",
                     command=block.group(2).strip(),
-                    expected=after,
-                ))
+                    expected=plain_text(subcontent[last.end():next_start]),
+                )
+                if pair:
+                    item["linuxCommand"] = pair.group(2).strip()
+                steps.append(item)
+                index += 2 if pair else 1
             entry = dict(
                 id=f"{prefix}-{len(sections) + 1}", kind="practice",
                 title=f"実習: {subheading}", body=body,
@@ -100,8 +115,11 @@ def section(key, title, body, callout=None, steps=None):
     return result
 
 
-def step(title, description, command, expected):
-    return dict(title=title, description=description, command=command, expected=expected)
+def step(title, description, command, expected, linux_command=None):
+    result = dict(title=title, description=description, command=command, expected=expected)
+    if linux_command:
+        result["linuxCommand"] = linux_command
+    return result
 
 
 NAMESPACED_RESOURCES = {
@@ -201,10 +219,10 @@ def phase_diagram(phase_id):
         caption = "Node は実行場所、Namespace は論理スコープで、親子関係ではありません。Node 枠内の Pod も workboard Namespace に属します。kind は単一の control-plane 兼 worker です。"
         return diagram_model("kubernetes", "通信・管理・データの寿命を分ける", caption, nodes, edges, k8s_groups(), views, dict(api=["api-pod"], database=["db-pod"], migration=["migrate-job", "migrate-pod"]))
     if phase_id == 3:
-        nodes = [pod("api-pod", "API Pod", "FastAPI", 0), diagram_node("db-service", "DB Service", "kubernetes.service", "安定した論理接続先", "namespace", 1), pod("db-pod", "DB Pod", "PostgreSQL", 1), diagram_node("sts", "DB StatefulSet", "kubernetes.statefulset", "Pod の識別子と保存先の対応", "management", 1), diagram_node("pvc", "PVC", "kubernetes.pvc", "Namespace 内の保存先要求", "namespace", 2), diagram_node("pv", "PV", "kubernetes.pv", "cluster scope の保存領域オブジェクト", "cluster", 2), diagram_node("config", "ConfigMap", "kubernetes.configmap", "設定値", "namespace", 0), diagram_node("secret", "Secret", "kubernetes.secret", "配布権限・保存時保護は別途必要", "namespace", 1)]
+        nodes = [pod("api-pod", "API Pod", "FastAPI", 0), diagram_node("db-service", "DB Service", "kubernetes.service", "安定した論理接続先", "namespace", 1), pod("db-pod", "DB Pod", "PostgreSQL", 1), diagram_node("sts", "DB StatefulSet", "kubernetes.statefulset", "Pod の識別子と保存先の対応", "management", 1), diagram_node("pvc", "PVC", "kubernetes.pvc", "Pod 専用の保存先要求", "namespace", 2), diagram_node("pv", "PV", "kubernetes.pv", "cluster scope の保存領域オブジェクト", "cluster", 2), diagram_node("config", "ConfigMap", "kubernetes.configmap", "非機密の設定値（ハッシュ付き名）", "namespace", 0), diagram_node("secret", "Secret", "kubernetes.secret", "base64 表現。権限・保存時保護は別途必要", "namespace", 1)]
         edges = [relation("api-pod", "db-service", "SQL"), relation("db-service", "db-pod", "SQL / selector"), relation("sts", "db-pod", "所有 / 安定した識別子", "ownership"), relation("db-pod", "pvc", "mount に使用", "storage"), relation("pvc", "pv", "バインド", "storage"), relation("config", "api-pod", "設定を注入", "configuration"), relation("secret", "api-pod", "接続情報を配布", "configuration"), relation("secret", "db-pod", "接続情報を配布", "configuration")]
-        views = [diagram_view("storage", "保存先とスコープ", "予習の DB 周辺図です。StatefulSet は ReplicaSet を介しません。PVC は Namespace 内、PV と Node は cluster scope です。PV は物理ディスクそのものの絵ではありません。", ["api-pod", "db-service", "db-pod", "sts", "pvc", "pv"], ["traffic", "ownership", "storage"]), diagram_view("configuration", "設定の配布", "予習。ConfigMap/Secret は実行中のコンテナではなく、API に保存される設定オブジェクトです。", ["config", "secret", "api-pod", "db-pod"], ["configuration"])]
-        return diagram_model("storage", "Pod の寿命と保存先を分離する", "Phase 3 の予習です。API の管理チェーンなど、今回の焦点以外は省略しています。Node と Namespace は直交します。", nodes, edges, k8s_groups("保存先を利用する Node / 詳細は実装時に決定"), views, dict(api=["api-pod"], database=["db-pod", "pvc", "pv"], migration=[]))
+        views = [diagram_view("storage", "保存先とスコープ", "workboard-phase3 の DB 周辺図です。StatefulSet は ReplicaSet を介しません。PVC は Namespace 内、PV と Node は cluster scope です。PV は物理ディスクそのものの絵ではありません。", ["api-pod", "db-service", "db-pod", "sts", "pvc", "pv"], ["traffic", "ownership", "storage"]), diagram_view("configuration", "設定の配布", "ConfigMap/Secret は実行中のコンテナではなく、API に保存される設定オブジェクトです。内容が変わると名前のハッシュが変わり、参照する Pod は置き換わります。", ["config", "secret", "api-pod", "db-pod"], ["configuration"])]
+        return diagram_model("storage", "Pod の寿命と保存先を分離する", "Phase 3 の構成です。Web や管理チェーンなど、今回の焦点以外は省略しています。Node と Namespace は直交します。PV は kind のノード内の保存領域で、ノード喪失を含めた可用性の保証ではありません。", nodes, edges, k8s_groups(), views, dict(api=["api-pod"], database=["db-pod", "pvc", "pv"], migration=[]))
     if phase_id == 4:
         groups = k8s_groups("Node A / 実行場所") + [diagram_group("node-b", "Node B / 実行場所", "node", "cluster")]
         nodes = [diagram_node("metrics", "CPU 指標", "document", "metrics-server 等から得る値", "cluster", 0), diagram_node("hpa", "HPA", "kubernetes.hpa", "replicas を調整する宣言", "management", 0), diagram_node("deploy", "API Deployment", "kubernetes.deployment", "更新方針と必要数", "management", 1), diagram_node("rs", "API ReplicaSet", "kubernetes.replicaset", "Pod 数を維持", "management", 1), diagram_node("service", "API Service", "kubernetes.service", "準備できた Pod を選択", "namespace", 0), pod("api-a", "API Pod A", "FastAPI", 0), pod("api-b", "API Pod B", "FastAPI", 0, "node-b")]
@@ -260,7 +278,13 @@ RUBRICS = [
         ["API Pod削除では独立したDBのデータは残る", "DB Pod削除ではemptyDirとスキーマが消えmigrationの再実行が必要と説明する"],
         ["Kubernetesはコントローラーが継続的に望ましい状態へ近づける", "Composeの起動操作や再起動ポリシーとKubernetesの継続的な制御を区別する"],
     ],
-    [["安定した識別子とストレージを扱うStatefulSetの用途を説明する", "StatefulSetだけでバックアップやDBの高可用性は完成しないと説明する"], ["Podの寿命から保存先を分離すると説明する", "ノード喪失・誤削除・バックアップの課題を区別する"], ["overlayはbaseのYAMLへのパッチで環境差分を表すと説明する", "変数展開や条件分岐を行うテンプレートエンジンではなく、存在しないリソースを自動では作らないと説明する"]],
+    [
+        ["安定した識別子とストレージを扱うStatefulSetの用途を説明する", "StatefulSetだけでバックアップやDBの高可用性は完成しないと説明する"],
+        ["Podの寿命から保存先を分離すると説明する", "PVC削除やreclaim policy、ノード喪失・誤削除・バックアップの課題を区別する"],
+        ["overlayはbaseのYAMLへのパッチで環境差分を表すと説明する", "変数展開や条件分岐を行うテンプレートエンジンではなく、存在しないリソースを自動では作らないと説明する"],
+        ["Secretはbase64で表現されるだけで暗号化ではないと説明する", "読み取りやexecができる主体、RBAC、保存時の保護、配布先を含めて考える"],
+        ["ConfigMap/Secretの内容変更でハッシュ付き名が変わりPodテンプレートが更新されると説明する", "環境変数は起動時に決まるため、既存Podは自動で新しい値に変わらないと区別する"],
+    ],
     [["同一ノードの障害で全レプリカが停止し得ると説明する", "ノードやAZへの分散とDBの単一障害点も考える"], ["HPAは主にワークロードのレプリカ数を調整すると説明する", "ノード容量の追加は別の仕組みであると説明する"]],
     [["Secretはbase64だけで秘密を保護できないと説明する", "APIアクセス権限・保存時の保護・配布先を含めて考える"], ["人とワークロードを区別し最小権限を考える", "操作の対象・範囲・監査の観点を説明する"], ["k9sはkubeconfigの資格情報でKubernetes APIを呼ぶクライアントであると説明する", "操作できる範囲はツールではなくRBACで決まり、TUIでも誤削除のリスクは同じと説明する"]],
     [["AWS管理のControl Planeと利用者側の責任を区別する", "ノード・アドオン・アプリの更新や設定責任を挙げる"], ["管理主体と観察可能な範囲を比較する", "費用・制約・学習目的を判断条件に含める"]],
@@ -279,20 +303,20 @@ def build():
     phases = []
 
     def add(pid, slug, title, subtitle, level, minutes, summary, concepts, sections, graph):
-        text = lab_texts[pid] if pid < 3 else phase_texts[pid]
-        if pid < 3:
+        text = lab_texts[pid] if pid < IMPLEMENTED else phase_texts[pid]
+        if pid < IMPLEMENTED:
             goals = re.findall(r"^- (.+)$", heading_body(text, "学習目標"), re.M)
             prompts = lab_questions(text)
             labels = memo_labels(text)
             rubrics = RUBRICS[pid]
             if pid == 1:
                 sections.extend(practice_sections(
-                    read("README.md"), "practice-setup",
+                    text, "practice-setup",
                     ["Phase 1: Compose 上で WorkBoard を起動する"],
                 ))
             sections.extend(practice_sections(
                 text, "practice-lab",
-                ["前提条件", "検証コマンド・期待結果", "故障実験", "失敗時に確認すること", "Linux / macOS / WSL での再現", "後片付け"],
+                ["前提条件", "検証コマンド・期待結果", "故障実験", "失敗時に確認すること", "Linux / macOS / WSL での前提", "後片付け"],
             ))
         elif pid < 9:
             learned = re.search(r"\*\*学ぶこと:\*\* (.+)", text).group(1)
@@ -311,16 +335,16 @@ def build():
             prompts = [f"{axis.strip()}: {question.strip()}" for axis, question in pairs]
             rubrics = [["ECSとEKSを同じ条件で比較する", f"{axis.strip()}について構成・運用の違いを根拠と共に説明する", "前提と不確実性を明示しEKSを無条件の正解としない"] for axis, _ in pairs]
             labels = ["想定要件", "比較結果と根拠", "採用案・反対案", "不確実性と追加調査"]
-        if pid >= 3:
-            sections.insert(0, section("preview", "この章は予習です", "Phase 3以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。", "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"))
+        if pid >= IMPLEMENTED:
+            sections.insert(0, section("preview", "この章は予習です", f"Phase {IMPLEMENTED}以降のラボは未実装です。ここでは設計書の計画をもとに構成と判断軸を学びます。\n\nコマンドの実行や完了済みの実験を前提にせず、これから何を観察すべきかを回答してください。", "AWSリソース作成や既存環境の変更は、この教材の閲覧・回答では行いません。"))
         assert len(prompts) == len(rubrics), (pid, prompts)
         phases.append(dict(
             id=pid, slug=slug, title=title, subtitle=subtitle, level=level,
-            implemented=pid < 3, estimatedMinutes=minutes, summary=summary,
+            implemented=pid < IMPLEMENTED, estimatedMinutes=minutes, summary=summary,
             goals=goals, concepts=concepts, sections=sections, diagram=graph,
             questions=[dict(id=f"q{i}", prompt=prompt, rubric=rubric) for i, (prompt, rubric) in enumerate(zip(prompts, rubrics), 1)],
             memoFields=[dict(id=f"m{i}", label=label) for i, label in enumerate(labels, 1)],
-            sources=[dict(label="一次設計書", path=DESIGN)] + ([dict(label=f"Lab {pid:02d} 原本", path=LABS[pid])] if pid < 3 else []) + ([dict(label="Compose初回準備", path="README.md")] if pid == 1 else []),
+            sources=[dict(label="一次設計書", path=DESIGN)] + ([dict(label=f"Lab {pid:02d} 原本", path=LABS[pid])] if pid < IMPLEMENTED else []),
         ))
 
     add(0, "foundation", "学習の土台を整える", "環境確認と設計判断の記録", "foundation", 25,
@@ -330,7 +354,7 @@ def build():
             concept("一次設計書", "方針の原本を一か所で管理し、入口の文書から参照します。", "地図の正本と案内板"),
         ], [
             section("start", "二つの画面を使い分ける", "このポータルは学習・回答用の localhost:8765、WorkBoardはタスク操作用の localhost:8080 です。ポータルを開いてもWorkBoardやkindを起動・停止しません。\n\n各章で解説と図を読み、実際の観察は学習メモへ、設計判断は設計課題へ書きます。採点への送信では、何を実行し何を省略したかも伝えてください。"),
-            section("check", "導入と稼働を分けて確認する", "バージョンが返ればCLIの実行は確認できます。Dockerエンジンの起動、DB接続、WSL連携や互換性まで確認できたとは限りません。", steps=[step("PowerShellで確認", "リポジトリ直下で実行する参照のみの処理です。", command_from(lab_texts[0], "powershell -NoProfile"), "Gitが確認できれば終了コード0。他ツールの未導入も区別して表示。")]),
+            section("check", "導入と稼働を分けて確認する", "バージョンが返ればCLIの実行は確認できます。Dockerエンジンの起動、DB接続、WSL連携や互換性まで確認できたとは限りません。", steps=[step("シェルで確認", "リポジトリ直下で実行する参照のみの処理です。", command_from(lab_texts[0], "powershell -NoProfile"), "Gitが確認できれば終了コード0。他ツールの未導入も区別して表示。", command_from(lab_texts[0], "bash tools/preflight.sh"))]),
             section("record", "履歴と秘密情報を分ける", ".gitignoreは新たな追跡を避けるための設定です。追跡済みの秘密情報や過去の履歴は消しません。\n\n学習メモには観察・コマンド・期待との差を書きます。設計課題には自分の理由と代替案を書き、結果だけの『できた』から一歩進めます。", "補助解説はポータル独自の編集です。設計課題と学習メモの項目名は既存ラボを正本にしています。"),
         ], phase_diagram(0))
 
@@ -342,9 +366,9 @@ def build():
         ], [
             section("flow", "入口はWebだけ", "ブラウザーは8080番のNginxへ接続します。静的画面を受け取り、/api/の呼び出しはNginxがAPIへ転送します。APIはDBサービス名でPostgreSQLへ接続します。\n\nAPI/DBのポートをホストに公開しなくても、同じComposeネットワーク内では通信できます。コンテナを分ける主な理由は個別の更新・再起動・管理です。分割だけで冗長化が完成するわけではありません。"),
             section("startup", "起動順と準備完了は別", "DB→migration→API→Webの順に準備します。service_healthyはDBの準備条件、service_completed_successfullyはmigrationの正常終了を待つ条件です。\n\nこれは起動時の条件です。稼働中のDB障害では接続の回復やエラー処理が別途必要になります。migrationはテーブルを用意する一回の処理で、長時間リクエストを受けるAPIとは役割が異なります。", "現在kindを使用して8080を転送中なら、そのまま学習できます。Composeを重ねて起動せず、初回構築はこの章の実習を開いて進めてください。", [
-                step("Composeの状態を読む", "既存コンテナを変更せず一覧を確認します。停止済みなら何も動いていないことが観察結果です。", command_from(lab_texts[1], "docker compose -f docker/compose.yaml ps -a"), "稼働中ならAPI/DBがhealthy、WebがUp、migrationがExited 0。"),
-                step("準備の経過を読む", "migrationとAPIのログを参照します。", command_from(lab_texts[1], "docker compose -f docker/compose.yaml logs"), "migrationの正常終了とAPIの起動が分かる。")]),
-            section("health", "healthと保存先を観察する", "LivenessはAPIの生存、ReadinessはDBへの接続を確認します。DB停止時にliveまで失敗させると、APIを再起動してもDB障害は直らず、再起動が連鎖し得ます。\n\nAPIやブラウザーを再起動してもタスクが残るのは、DBがnamed volumeに保存するためです。現在8080がkindを向いていれば、同じURLでも保存先はkindのDBです。異なる環境のデータを同じものと考えないでください。", steps=[step("現在の8080のhealthを見る", "返答の意味に加え、今の8080がComposeかkindかをメモします。", command_from(lab_texts[1], "Invoke-RestMethod http://localhost:8080/health/ready"), "DBに接続できれば正常応答。未起動なら接続失敗も観察結果。")]),
+                step("Composeの状態を読む", "既存コンテナを変更せず一覧を確認します。停止済みなら何も動いていないことが観察結果です。", command_from(lab_texts[1], "docker compose -f phases/01-compose/compose.yaml ps -a"), "稼働中ならAPI/DBがhealthy、WebがUp、migrationがExited 0。"),
+                step("準備の経過を読む", "migrationとAPIのログを参照します。", command_from(lab_texts[1], "docker compose -f phases/01-compose/compose.yaml logs"), "migrationの正常終了とAPIの起動が分かる。")]),
+            section("health", "healthと保存先を観察する", "LivenessはAPIの生存、ReadinessはDBへの接続を確認します。DB停止時にliveまで失敗させると、APIを再起動してもDB障害は直らず、再起動が連鎖し得ます。\n\nAPIやブラウザーを再起動してもタスクが残るのは、DBがnamed volumeに保存するためです。現在8080がkindを向いていれば、同じURLでも保存先はkindのDBです。異なる環境のデータを同じものと考えないでください。", steps=[step("現在の8080のhealthを見る", "返答の意味に加え、今の8080がComposeかkindかをメモします。", command_from(lab_texts[1], "Invoke-RestMethod http://localhost:8080/health/ready"), "DBに接続できれば正常応答。未起動なら接続失敗も観察結果。", command_from(lab_texts[1], "curl -i http://localhost:8080/health/ready"))]),
         ], phase_diagram(1))
 
     add(2, "kubernetes", "望ましい状態を保つ", "kind・Pod・Service・一時DB", "local", 60,
@@ -356,7 +380,7 @@ def build():
             concept("JobとinitContainer", "Jobは完了を目指す一回の処理です。通常のinitContainerは同じPodの主コンテナより前に正常終了する必要があります。", "独立した準備作業と、開店前の室内準備の違い"),
         ], [
             section("observe", "既存クラスターから読み始める", "この環境のPhase 2は構築済みです。読み取りコマンドからPod・ReplicaSet・Deployment・Serviceを見比べます。各コマンドは専用contextを明示し、別クラスターと混同しないようにします。\n\nkindのNodeもローカルDocker内で動きます。Nodeの中にPod、その中にコンテナという階層です。アプリのコンテナイメージはComposeと共通でも、起動・維持する主体が変わります。", "以下は手動実行用です。ポータルはコマンドを自動実行しません。既存Podの削除や再構築はここでは必要ありません。", [
-                step("現在のシェルへ専用設定", "先頭のドットとスペースは現在のPowerShellへ設定を読み込む指定です。", command_from(lab_texts[2], ". .\\scripts\\kind-env.ps1"), "現在のシェルだけで専用KUBECONFIGと.toolsが使える。"),
+                step("現在のシェルへ専用設定", "PowerShellの先頭のドットとスペース、Bashのsourceは、現在のシェルへ設定を読み込む指定です。", command_from(lab_texts[2], ". .\\phases\\02-kind-basics\\scripts\\env.ps1"), "現在のシェルだけで専用KUBECONFIGと.toolsが使える。", command_from(lab_texts[2], "source phases/02-kind-basics/scripts/env.sh")),
                 step("管理階層を一覧にする", "作られたPodと、それを維持するリソースを見ます。", command_from(lab_texts[2], "kubectl --context kind-workboard-lab -n workboard get pods,rs,deploy,svc"), "Web/API/DBが各1 Pod。Serviceが別リソースとして存在。"),
                 step("転送先を確かめる", "selectorとPod labelが一致する結果をEndpointSliceで追います。", command_from(lab_texts[2], "kubectl --context kind-workboard-lab -n workboard get endpointslices"), "API Serviceに対応するPodのアドレスが分かる。")]),
             section("network", "Serviceとport-forwardを分ける", "Web→APIの通信はClusterIP Serviceを利用します。ServiceのselectorとPodのlabelが一致しないと、期待するPodへ転送されません。PodがRunningであることだけでは通信の成功を保証しません。\n\nsvc/workboard-webを指定したport-forwardはselectorで選んだWeb Podへの一時トンネルです。ClusterIPそのものを外部公開する操作ではありません。WorkBoardはlocalhost:8080、学習ポータルはlocalhost:8765です。既存の転送を止めず、そのまま8080を利用できます。", "port-forwardは常設の公開設定ではありません。接続しているWeb Podの置き換えでも終了する場合があります。"),
@@ -364,22 +388,31 @@ def build():
             section("init", "initContainerで解ける範囲", "現在のPhase 2はmigration Jobを使っており、API PodにinitContainerはありません。比較として、initContainerは同じPodの主コンテナより前に順番に実行され、準備を終えてから主コンテナを起動できます。\n\nAPI PodのinitContainerでDBを準備したとしても、別のDB Podだけが再作成されたとき、既存API PodのinitContainerは自動で再実行されません。DB障害中の接続回復やmigrationの再実行方針は、別に設計する必要があります。\n\n/health/readyのSELECT 1はDB接続を確かめます。テーブルの存在やmigration完了まで調べるものではないので、readyが200でもCRUDが失敗する場面があります。"),
         ], phase_diagram(2))
 
+    add(3, "storage", "設定とデータを切り離す", "kind・Kustomize・StatefulSet・PVC", "local", 70,
+        "設定・Secret・保存先をPodの寿命から切り離し、守れる範囲と守れない範囲を観察します。", [
+            concept("Kustomize", "baseに共通のYAML、overlayに環境差分を置き、パッチとgeneratorで最終的なYAMLを組み立てます。変数展開を行うテンプレートエンジンではありません。", "原本の図面に環境別の修正指示を重ねる"),
+            concept("PVC / PV", "アプリの保存先要求と、それに応える保存領域を分けます。PVCはNamespace内、PVはクラスター全体のオブジェクトです。", "倉庫の利用申込書と割り当てられた棚"),
+            concept("StatefulSet", "Podの名前と専用のPVCの対応を保つ仕組みです。バックアップやDBの高可用性までは扱いません。", "名前付きの担当席と専用保管庫"),
+            concept("ConfigMap / Secret", "設定と秘密情報をイメージから分離します。Secretはbase64表現で暗号化ではなく、権限設計が必要です。", "共有手順書と配布先を絞った鍵"),
+        ], [
+            section("kustomize", "適用前に生成結果を読む", "新しい専用クラスター workboard-phase3 で行います。Phase 2 の workboard-lab は変更しません。\n\nbaseにはNamespaceもConfigMap/Secretもありません。overlayがnamespace・イメージ・imagePullPolicyを変え、ConfigMapとSecretを生成します。生成された名前にはハッシュが付き、参照側の名前も書き換わります。", "kubectl kustomize は生成結果を表示するだけで、クラスターを変更しません。Secret の入力は Git 管理外の db.env です。", [
+                step("Phase 3 の接続先を選ぶ", "今のシェルだけで Phase 3 用の kubeconfig を使います。Phase 2 の env は従来どおり workboard-lab を指します。", command_from(lab_texts[3], ". .\\phases\\03-config-storage\\scripts\\env.ps1"), "KUBECONFIG が .kube/workboard-phase3.yaml になる。", command_from(lab_texts[3], "source phases/03-config-storage/scripts/env.sh")),
+                step("overlay の生成結果を読む", "ハッシュ付きの名前、namespace、イメージ、Secretのbase64を確認します。", command_from(lab_texts[3], "kubectl kustomize phases/03-config-storage/kustomize/overlays/kind"), "ConfigMap/Secret の名前にハッシュが付き、Deployment等の参照名も同じになる。")]),
+            section("persistence", "Podの寿命を越える保存先", "StatefulSetのPodは固定名で、volumeClaimTemplatesからPod専用のPVCが作られます。DB Podを削除しても同じPVCに接続するため、タスクが残ります。Lab 02のemptyDirとの違いを比べます。\n\nPVCを削除するとreclaim policyにより保存領域も消え、スキーマだけをmigrationで戻すことになります。PVはノード喪失を含めた可用性の保証ではありません。", steps=[
+                step("PVC と PV を観察する", "PVCがBoundか、PVがどのPVCに対応するかを確認します。", command_from(lab_texts[3], "kubectl --context kind-workboard-phase3 get pvc,pv -n workboard"), "PVCがBoundで、対応するPVが存在する。"),
+                step("DB Pod を作り直す", "ダミータスクを作成した後に実行し、名前・UID・PVC・データを比べます。", command_from(lab_texts[3], "kubectl --context kind-workboard-phase3 -n workboard delete pod workboard-postgres-0"), "Pod の UID は変わり、PVC は同じでタスクが残る。")]),
+            section("config", "設定変更とmigrationの再実行", "ConfigMap/Secretの内容を変えると名前のハッシュが変わり、Podテンプレートが更新されて新しいPodに置き換わります。旧いConfigMapは自動では消えません。\n\nJobのspec.templateは作成後に変更できないため、参照名が変わるとapplyできません。Alembicのupgrade headは何度実行しても安全なので、構築スクリプトは完了済みJobを削除して作り直します。", steps=[
+                step("構築スクリプトを再実行する", "既存のクラスターとPVCを維持したまま、Jobを作り直します。", command_from(lab_texts[3], "powershell -NoProfile -File phases/03-config-storage/scripts/up.ps1"), "終了コード0。タスクが残り、Jobが再びCompleteになる。", command_from(lab_texts[3], "bash phases/03-config-storage/scripts/up.sh"))]),
+            section("secret", "Secretが守る範囲を確かめる", "SecretはAPIに保存される設定オブジェクトで、base64表現は暗号化ではありません。読み取りやexecができる主体、保存時の保護、配布先をあわせて考えます。\n\nこのクラスターに保存時暗号化は設定していないため、その確認は未検証として記録します。", "実パスワードはリポジトリに含めません。構築スクリプトがローカル専用の値を db.env に生成します。", [
+                step("読める主体を確認する", "管理者とdefault ServiceAccountの違いを見ます。", command_from(lab_texts[3], "kubectl --context kind-workboard-phase3 -n workboard auth can-i get secrets --as"), "管理者は yes、default ServiceAccount は no。")]),
+        ], phase_diagram(3))
+
     add_previews(add)
     validate(phases)
     return {"title": "WorkBoardで学ぶ Kubernetes / EKS", "phases": phases}
 
 
 def add_previews(add):
-    add(3, "storage", "設定とデータを切り離す", "予習 / StatefulSet・PVC・Secret", "local", 35,
-        "Podがなくなっても守るデータと、別途必要な保護を整理します。", [
-            concept("PVC / PV", "アプリの保存先要求と、それに応える保存領域を分けます。", "倉庫の利用申込書と割り当てられた棚"),
-            concept("StatefulSet", "安定した識別子やストレージとの対応を持つPodを管理します。", "名前付きの担当席と専用保管庫"),
-            concept("ConfigMap / Secret", "設定と秘密情報をアプリのイメージから分離します。Secretにも権限設計が必要です。", "共有手順書と配布先を絞った鍵"),
-        ], [
-            section("persistence", "Podの寿命を越える保存先", "emptyDirからPVCへ移すと、Podの置き換えと保存領域の寿命を分離できます。StatefulSetはDBの識別子や保存先の対応を扱いやすくしますが、バックアップやDB自体の可用性を自動で完成させません。\n\n設計書はStorageClassを事前確認する方針です。ローカルノードに依存する保存先なら、ノード喪失時の復旧は別課題になります。"),
-            section("config", "設定差分を追える形にする", "Kustomizeのbaseに共通構成、overlayに環境差分を置く計画です。Secretに値を入れても、読み取り可能な人・Pod・保存時の保護は別途考えます。\n\n実装時には『Pod削除後に同じタスクが残るか』『PVCがどのPVに結び付くか』『誤削除から戻せるか』を別々に観察します。"),
-        ], phase_diagram(3))
-
     add(4, "scaling", "増やす・更新する・耐える", "予習 / Probe・HPA・配置制御", "local", 35,
         "レプリカ数だけでは語れない可用性と、計測に基づく調整を学びます。", [
             concept("Probe", "生存・受付可否・起動の確認を目的ごとに分けます。", "呼吸確認・受付状況・開店準備の別々の点検"),
@@ -466,12 +499,12 @@ def validate_diagram(diagram):
 def validate(phases):
     assert [phase["id"] for phase in phases] == list(range(10))
     for phase in phases:
-        assert phase["implemented"] == (phase["id"] < 3)
+        assert phase["implemented"] == (phase["id"] < IMPLEMENTED)
         assert phase["goals"] and phase["questions"] and phase["memoFields"]
         assert all(q["prompt"] and q["rubric"] for q in phase["questions"])
         assert all((ROOT / source["path"]).is_file() for source in phase["sources"])
         validate_diagram(phase["diagram"])
-        if phase["id"] >= 3:
+        if phase["id"] >= IMPLEMENTED:
             assert not any(s.get("steps") for s in phase["sections"])
         else:
             practice = [s for s in phase["sections"] if s.get("kind") == "practice"]

@@ -22,22 +22,24 @@ Git と PowerShell 5.1 以降、または Bash を利用する。その他のツ
 1. [全体 README](../../README.md) と [一次設計書](../../docs/PROJECT_DESIGN.md) を読み、Phase 0 の範囲を確認する。
 2. `.gitignore` と `.editorconfig` を読み、秘密情報の扱いとファイル形式を確認する。
 3. [ADR-0001](../../docs/adr/0001-application-and-learning-stack.md) の採用理由・代替案を確認する。
-4. 自分が利用するシェルで preflight を実行し、結果を学習メモに記録する。
+4. 自分が利用するシェルで preflight を実行し、結果を学習ポータルの学習メモに記録する。
 
 ## 検証コマンド・期待結果
 
-Windows PowerShell（リポジトリ直下）:
+リポジトリ直下で実行します。
+
+**Windows (PowerShell):**
 
 ```powershell
-powershell -NoProfile -File .\scripts\preflight.ps1
+powershell -NoProfile -File .\tools\preflight.ps1
 $LASTEXITCODE
 ```
 
-Linux / macOS / WSL の Bash（リポジトリ直下）:
+**Linux / macOS / WSL (Bash):**
 
 ```bash
-bash -n scripts/preflight.sh
-bash scripts/preflight.sh
+bash -n tools/preflight.sh
+bash tools/preflight.sh
 echo $?
 ```
 
@@ -64,35 +66,27 @@ git check-ignore --no-index .env.example terraform/environments/lab/terraform.tf
 
 ## 学習メモ
 
-実際の観察で埋める。未実施の項目にチェックを付けない。
+観察結果と設計課題への回答は、この README ではなく**学習ポータルに入力します**（各自の PC の Git 管理外 `learning-portal/.data` にだけ保存され、リポジトリには残りません）。実行していない実験は「省略」と理由を書きます。記録する項目は次のとおりです。
 
-| 項目 | 観察・結果 |
-| --- | --- |
-| 実行日・OS・シェル | 2026/11/8・Windows・Powershell |
-| preflight の終了コード | 0 |
-| 利用可能なツールとバージョン | Docker 29.1.2, Docker Compose v2.40.3-desktop.1, kubectl 1.34, Python 3.11.9, Node.js v24.13.1, aws-cli/2.39.3 |
-| 未導入・確認失敗 | kind, Terraform |
-| Git 除外の確認結果 | 設定済み |
-| WSL2 / Docker Desktop の経路 | 確認済み |
-| 設計課題への自分の回答 | 下記 |
-| 疑問・未解決事項 | なし |
-
-設計課題への回答
-1. EKSはKubernetesをAWS上で管理するためのサービスであり、Kubernetesをまず理解する前にEKSを学ぼうとすると混乱するから。また、EKSは従量課金のサービスであり、最初から載せてしまうとどんどん課金されていってしまうから
-2. DB接続やDockerエンジンの起動までは保証できない。デーモンが動いていないとDockerは動作できず、バージョンが返ってくるのは飽くまでもマシンにインストールされていることを示すだけだから
-3. 二重管理になり、片方の更新漏れが発生すると、どちらが正しい情報かを判断するのが難しくなってしまう
-4. 消えない。コミット履歴は残り続けるので履歴を遡ることで見えてしまう
+- 実行日・OS・シェル
+- preflight の終了コード
+- 利用可能なツールとバージョン
+- 未導入・確認失敗
+- Git 除外の確認結果
+- WSL2 / Docker Desktop の経路
+- 設計課題への自分の回答
+- 疑問・未解決事項
 
 参照: [一次設計書](../../docs/PROJECT_DESIGN.md)、[Git gitignore](https://git-scm.com/docs/gitignore)。具体的なツールのバージョン選択は該当フェーズで公式資料を確認する。
 
 ## 実装時の検証記録
 
-2026-11-08 に実装担当が Windows 上で確認。上の学習メモは学習者自身が記録するための欄として残す。
+2026-11-08 に実装担当が Windows 上で確認。学習者自身の記録は README ではなく学習ポータルに残す。
 
 | 確認 | 結果 |
 | --- | --- |
 | PowerShell 5.1 構文解析 | エラーなし |
-| `powershell -NoProfile -File scripts/preflight.ps1` | 終了コード 0 |
+| `powershell -NoProfile -File tools/preflight.ps1` | 終了コード 0 |
 | Git Bash 5.2.37 の `bash -n` と preflight 実行 | 構文エラーなし、終了コード 0 |
 | Git | 2.53.0.windows.1 |
 | Docker / Compose | 29.1.2 / v2.40.3-desktop.1。ローカル設定ファイルの読み取り拒否警告あり |
@@ -102,7 +96,8 @@ git check-ignore --no-index .env.example terraform/environments/lab/terraform.tf
 | kind / Terraform | コマンド未検出 |
 | Git 除外対象 / 例示ファイル | 想定どおり除外 / 非除外 |
 | WSL2 | `wsl --status` が `Wsl/EnumerateDistros/E_ACCESSDENIED` で失敗。状態確認不能 |
-| Linux / macOS / WSL 内での実行 | 未実施 |
+| WSL2 Ubuntu（Docker Desktop の WSL 統合）での `bash -n` と `bash tools/preflight.sh`（2026-11-10） | 構文エラーなし、Git・Docker・Compose・kubectl・Python・AWS CLI は利用可能、kind・Node.js・Terraform は未導入、終了コード 0 |
+| ネイティブ Linux / macOS での実行 | 未実施 |
 | Docker エンジン・Docker Desktop の連携・Kubernetes・AWS 接続 | 未実施 |
 
 `git init` でローカルリポジトリを初期化した。検証用ユーザーと作業フォルダー所有者の差により通常の Git 操作が拒否されたため、除外検証時だけ `git -c safe.directory=C:/Users/azhid/kubernetes-eks-learning check-ignore --no-index ...` を使用した。グローバル設定の変更、コミット、プッシュは行っていない。
